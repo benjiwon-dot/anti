@@ -127,6 +127,28 @@ export const STRINGS = {
         cartEmpty: "Your cart is empty. Please add some tiles first.",
         fillRequired: "Please fill in all required shipping fields.",
 
+        // Promo Codes
+        promoHaveCode: "Have a code?",
+        promoEnterCode: "Enter promo code",
+        promoApply: "Apply",
+        promoRemove: "Remove",
+        promoApplied: "Code applied",
+        promoInvalid: "Invalid promo code",
+        promoExpired: "Promo code expired",
+        promoMaxed: "Promo code limit reached",
+        promoInactive: "Promo code is not active",
+        discountLabel: "Discount",
+        subtotalLabel: "Subtotal",
+
+        // Photo Permission
+        photoPermissionTitle: "Photos access needed",
+        photoPermissionDescription: "Allow photo access so you can upload and print your photos as tiles. We only use your photos for editing and printing.",
+        photoPermissionBullet1: "Select your favorite photos",
+        photoPermissionBullet2: "Edit and crop them perfectly",
+        photoPermissionBullet3: "Print as premium wall tiles",
+        photoPermissionContinue: "Continue",
+        photoPermissionPrivacy: "Privacy Policy",
+
         // Order Success
         thankYou: "Thank You!",
         orderPlaced: "Your order has been placed successfully.",
@@ -291,6 +313,28 @@ export const STRINGS = {
         placeOrder: "สั่งซื้อสินค้า",
         cartEmpty: "ตะกร้าของคุณว่างเปล่า โปรดเลือกรูปภาพก่อน",
         fillRequired: "โปรดกรอกข้อมูลการจัดส่งให้ครบถ้วน",
+
+        // Promo Codes
+        promoHaveCode: "มีโค้ดส่วนลด?",
+        promoEnterCode: "กรอกรหัสส่วนลด",
+        promoApply: "ใช้โค้ด",
+        promoRemove: "ลบ",
+        promoApplied: "ใช้โค้ดสำเร็จ",
+        promoInvalid: "โค้ดส่วนลดไม่ถูกต้อง",
+        promoExpired: "โค้ดส่วนลดหมดอายุ",
+        promoMaxed: "โค้ดส่วนลดถูกใช้ครบแล้ว",
+        promoInactive: "โค้ดส่วนลดไม่ active",
+        discountLabel: "ส่วนลด",
+        subtotalLabel: "ยอดรวมย่อย",
+
+        // Photo Permission
+        photoPermissionTitle: "ต้องการเข้าถึงรูปภาพ",
+        photoPermissionDescription: "อนุญาตให้เข้าถึงรูปภาพเพื่ออัปโหลดและพิมพ์เป็นกรอบรูป เราใช้รูปภาพของคุณเพื่อแก้ไขและพิมพ์เท่านั้น",
+        photoPermissionBullet1: "เลือกรูปภาพที่คุณชื่นชอบ",
+        photoPermissionBullet2: "แก้ไขและครอปอย่างสมบูรณ์แบบ",
+        photoPermissionBullet3: "พิมพ์เป็นกรอบรูปพรีเมียมติดผนัง",
+        photoPermissionContinue: "ดำเนินการต่อ",
+        photoPermissionPrivacy: "นโยบายความเป็นส่วนตัว",
 
         // Order Success
         thankYou: "ขอบคุณมากครับ!",

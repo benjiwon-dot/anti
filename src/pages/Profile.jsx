@@ -13,15 +13,37 @@ import {
 } from "lucide-react";
 import { useLanguage } from "../context/LanguageContext";
 
+import { useAuth } from "../context/AuthContext";
+
 export default function Profile() {
     const navigate = useNavigate();
     const { t } = useLanguage();
+    const { user, login, logout } = useAuth();
+
+    const handleSignIn = () => {
+        // For now, simple mock auto login
+        login('mock_google');
+    };
+
+    const handleLogout = () => {
+        logout();
+    };
 
     const menuGroups = [
         {
             title: t.account,
             items: [
-                { title: t.signIn, icon: LogIn, subtitle: t.exampleUser, onClick: () => { } },
+                user ? {
+                    title: t.signOut || "Sign Out",
+                    icon: LogIn, // Using LogIn icon for now, could import LogOut
+                    subtitle: user.email,
+                    onClick: handleLogout
+                } : {
+                    title: t.signIn,
+                    icon: LogIn,
+                    subtitle: t.exampleUser,
+                    onClick: handleSignIn
+                },
                 { title: t.addresses, icon: MapPin, onClick: () => { } },
                 { title: t.paymentMethods, icon: CreditCard, onClick: () => { } },
             ]
@@ -55,8 +77,8 @@ export default function Profile() {
             aria-label={item.title}
         >
             <div style={styles.rowLeft}>
-                <item.icon size={20} color="#111" strokeWidth={2} />
-                <span style={styles.rowTitle}>{item.title}</span>
+                <item.icon size={20} color={item.title === (t.signOut || "Sign Out") ? "red" : "#111"} strokeWidth={2} />
+                <span style={{ ...styles.rowTitle, color: item.title === (t.signOut || "Sign Out") ? "red" : "#111" }}>{item.title}</span>
             </div>
             <div style={styles.rowRight}>
                 {item.subtitle && <span style={styles.rowSubtitle}>{item.subtitle}</span>}

@@ -1,3 +1,4 @@
+// components/editor/CropFrame.jsx
 import React, { useRef, useState, useEffect, useMemo } from "react";
 import { useLanguage } from "../../context/LanguageContext";
 
@@ -9,12 +10,27 @@ export default function CropFrame({ imageSrc, crop, onChange, filterStyle }) {
     const containerRef = useRef(null);
     const [imgState, setImgState] = useState({ w: 0, h: 0 });
 
+    // ✅ 버퍼링 감소용 (리렌더 폭주 방지)
+    const rafRef = useRef(null);
+    const pendingCropRef = useRef(null);
+
     useEffect(() => {
         if (!imageSrc) return;
         const img = new Image();
         img.src = imageSrc;
         img.onload = () => setImgState({ w: img.naturalWidth, h: img.naturalHeight });
     }, [imageSrc]);
+
+    // ✅ 컴포넌트 언마운트 시 남은 rAF 정리
+    useEffect(() => {
+        return () => {
+            if (rafRef.current) {
+                cancelAnimationFrame(rafRef.current);
+                rafRef.current = null;
+            }
+            pendingCropRef.current = null;
+        };
+    }, []);
 
     // ✅ filterStyle spread 금지 (opacity/filter 덮어쓸 수 있음)
     const selectedFilter = useMemo(() => {
@@ -24,20 +40,41 @@ export default function CropFrame({ imageSrc, crop, onChange, filterStyle }) {
 
     // ✅ UI에서 쓰는 baseScale은 PREVIEW_SIZE 기준 (배경이 400을 꽉 채우도록)
     const baseScale =
-        imgState.w && imgState.h ? Math.max(PREVIEW_SIZE / imgState.w, PREVIEW_SIZE / imgState.h) : 1;
+        imgState.w && imgState.h
+            ? Math.max(PREVIEW_SIZE / imgState.w, PREVIEW_SIZE / imgState.h)
+            : 1;
 
     const renderW = imgState.w * baseScale;
     const renderH = imgState.h * baseScale;
+
+    // ✅ 최소 줌(minScale) = "전체 사진이 300 프레임 안에 다 들어올 수 있는 수준"까지 허용
+    // - 무한 줌아웃 방지: HARD_FLOOR 아래로는 못 내려감
+    const minScale = useMemo(() => {
+        if (!imgState.w || !imgState.h) return 1;
+
+        const sContain = Math.min(
+            CROP_SIZE / (imgState.w * baseScale),
+            CROP_SIZE / (imgState.h * baseScale)
+        );
+
+        const HARD_FLOOR = 0.65; // 필요하면 0.6~0.75 사이에서 조정
+        const computed = Math.max(HARD_FLOOR, sContain);
+
+        return Math.min(1, computed);
+    }, [imgState.w, imgState.h, baseScale]);
 
     // ----- Clamp (프레임(CROP_SIZE) 기준으로만 제한) -----
     const clampPos = (x, y, scale) => {
         if (!imgState.w || !imgState.h) return { x: 0, y: 0 };
 
+        // ✅ scale도 여기서 clamp (minScale 반영)
+        const s = Math.max(minScale, Math.min(scale || 1, 3.0));
+
         const coverW = imgState.w * baseScale;
         const coverH = imgState.h * baseScale;
 
-        const currentW = coverW * (scale || 1);
-        const currentH = coverH * (scale || 1);
+        const currentW = coverW * s;
+        const currentH = coverH * s;
 
         const maxDx = Math.max(0, (currentW - CROP_SIZE) / 2);
         const maxDy = Math.max(0, (currentH - CROP_SIZE) / 2);
@@ -84,6 +121,14 @@ export default function CropFrame({ imageSrc, crop, onChange, filterStyle }) {
         }
     };
 
+    // ✅ 핵심: onChange를 매 move마다 호출하지 말고 rAF로 1프레임에 1번만 호출 (버퍼링 감소)
+    const flushPending = () => {
+        rafRef.current = null;
+        if (!pendingCropRef.current) return;
+        onChange(pendingCropRef.current);
+        pendingCropRef.current = null;
+    };
+
     const onMove = (e) => {
         if (!gesture.current.active) return;
         e.preventDefault();
@@ -96,8 +141,7 @@ export default function CropFrame({ imageSrc, crop, onChange, filterStyle }) {
             const dist = getDist(e);
             const factor = dist / gesture.current.startDist;
             nextScale = gesture.current.startScale * factor;
-            nextScale = Math.max(1.0, Math.min(nextScale, 3.0));
-            // pinch 중에도 clamp는 꼭
+            nextScale = Math.max(minScale, Math.min(nextScale, 3.0));
         } else if (gesture.current.mode === "drag") {
             const p = e.touches ? e.touches[0] : e;
             const dx = p.clientX - gesture.current.startX;
@@ -107,15 +151,38 @@ export default function CropFrame({ imageSrc, crop, onChange, filterStyle }) {
         }
 
         const clamped = clampPos(nextX, nextY, nextScale);
+        const finalScale = Math.max(minScale, Math.min(nextScale, 3.0));
 
-        if (clamped.x !== crop.x || clamped.y !== crop.y || nextScale !== crop.scale) {
-            onChange({ x: clamped.x, y: clamped.y, scale: nextScale });
+        // 변경이 없으면 스킵
+        if (
+            clamped.x === (crop.x || 0) &&
+            clamped.y === (crop.y || 0) &&
+            finalScale === (crop.scale || 1)
+        ) {
+            return;
+        }
+
+        // ✅ pending에만 저장하고, 화면 업데이트는 rAF에서 1회 처리
+        pendingCropRef.current = { x: clamped.x, y: clamped.y, scale: finalScale };
+
+        if (!rafRef.current) {
+            rafRef.current = requestAnimationFrame(flushPending);
         }
     };
 
     const onEnd = () => {
         gesture.current.active = false;
         gesture.current.mode = "none";
+
+        // ✅ 손을 떼는 순간 마지막 pending 값을 즉시 반영 (프레임/상태 싱크 보장)
+        if (rafRef.current) {
+            cancelAnimationFrame(rafRef.current);
+            rafRef.current = null;
+        }
+        if (pendingCropRef.current) {
+            onChange(pendingCropRef.current);
+            pendingCropRef.current = null;
+        }
     };
 
     const sharedTransform = `translate(-50%, -50%) translate(${crop.x || 0}px, ${crop.y || 0}px) scale(${crop.scale || 1})`;
@@ -133,6 +200,7 @@ export default function CropFrame({ imageSrc, crop, onChange, filterStyle }) {
                 onTouchStart={onStart}
                 onTouchMove={onMove}
                 onTouchEnd={onEnd}
+                onTouchCancel={onEnd}
                 onMouseDown={onStart}
                 onMouseMove={onMove}
                 onMouseUp={onEnd}
@@ -224,6 +292,9 @@ const styles = {
         maxWidth: "none",
         maxHeight: "none",
         userSelect: "none",
+
+        // ✅ 현재 유지 (요청: 화질/기능/프레임 동일)
+        transition: "transform 70ms linear",
     },
 
     cropWindow: {
@@ -258,10 +329,46 @@ const styles = {
         boxShadow: "0 0 0 1px rgba(255,255,255,0.68), 0 12px 28px rgba(0,0,0,0.18)",
     },
 
-    cornerTL: { position: "absolute", top: 8, left: 8, width: 10, height: 10, borderLeft: "1px solid #fff", borderTop: "1px solid #fff", opacity: 0.22 },
-    cornerTR: { position: "absolute", top: 8, right: 8, width: 10, height: 10, borderRight: "1px solid #fff", borderTop: "1px solid #fff", opacity: 0.22 },
-    cornerBL: { position: "absolute", bottom: 8, left: 8, width: 10, height: 10, borderLeft: "1px solid #fff", borderBottom: "1px solid #fff", opacity: 0.22 },
-    cornerBR: { position: "absolute", bottom: 8, right: 8, width: 10, height: 10, borderRight: "1px solid #fff", borderBottom: "1px solid #fff", opacity: 0.22 },
+    cornerTL: {
+        position: "absolute",
+        top: 8,
+        left: 8,
+        width: 10,
+        height: 10,
+        borderLeft: "1px solid #fff",
+        borderTop: "1px solid #fff",
+        opacity: 0.22,
+    },
+    cornerTR: {
+        position: "absolute",
+        top: 8,
+        right: 8,
+        width: 10,
+        height: 10,
+        borderRight: "1px solid #fff",
+        borderTop: "1px solid #fff",
+        opacity: 0.22,
+    },
+    cornerBL: {
+        position: "absolute",
+        bottom: 8,
+        left: 8,
+        width: 10,
+        height: 10,
+        borderLeft: "1px solid #fff",
+        borderBottom: "1px solid #fff",
+        opacity: 0.22,
+    },
+    cornerBR: {
+        position: "absolute",
+        bottom: 8,
+        right: 8,
+        width: 10,
+        height: 10,
+        borderRight: "1px solid #fff",
+        borderBottom: "1px solid #fff",
+        opacity: 0.22,
+    },
 
     caption: {
         marginTop: "20px",

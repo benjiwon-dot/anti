@@ -41,8 +41,29 @@ export default function Home() {
         { id: 'family', img: ASSETS.family },
     ];
 
+    const fileInputRef = React.useRef(null);
+
+    const handleFileSelect = (e) => {
+        const files = Array.from(e.target.files);
+        if (files.length > 0) {
+            const fileUrls = files.map(file => URL.createObjectURL(file));
+            sessionStorage.setItem('selectedPhotos', JSON.stringify(fileUrls));
+            navigate('/create/editor');
+        }
+    };
+
     return (
         <div style={styles.container}>
+            {/* Hidden File Input */}
+            <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileSelect}
+                multiple
+                accept="image/*"
+                style={{ display: 'none' }}
+            />
+
             {/* --- TOP NAV --- */}
             <div style={styles.topNav}>
                 <div style={styles.logoGroup}>
@@ -85,7 +106,7 @@ export default function Home() {
                             <button
                                 className="primary-cta"
                                 style={styles.primaryBtn}
-                                onClick={() => navigate('/create/select')}
+                                onClick={() => fileInputRef.current?.click()}
                             >
                                 <div style={styles.ctaInner}>
                                     <Crop size={20} style={{ marginRight: 12 }} />
@@ -547,9 +568,9 @@ const styles = {
 // Add active state and other global styles for Home
 const homeStyleTag = document.createElement("style");
 homeStyleTag.innerHTML = `
-  .primary-cta:active {
-    transform: scale(0.99);
-    box-shadow: 0 6px 16px rgba(0,0,0,0.14);
-  }
-`;
+    .primary-cta:active {
+        transform: scale(0.99);
+        box-shadow: 0 6px 16px rgba(0,0,0,0.14);
+    }
+    `;
 document.head.appendChild(homeStyleTag);

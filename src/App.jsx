@@ -14,6 +14,7 @@ import PrivacyPolicy from './pages/PrivacyPolicy';
 import TermsOfService from './pages/TermsOfService';
 import FAQ from './pages/FAQ';
 import Contact from './pages/Contact';
+import AdminPromos from './pages/AdminPromos';
 import SplashScreen from './components/common/SplashScreen';
 
 function Layout() {
@@ -21,6 +22,7 @@ function Layout() {
 
   const hideTabs =
     location.pathname.startsWith("/create") ||
+    location.pathname.startsWith("/admin") ||
     location.pathname === "/checkout" ||
     location.pathname === "/order-success" ||
     location.pathname === "/privacy" ||
@@ -48,6 +50,9 @@ function Layout() {
         <Route path="/create/editor" element={<Editor />} />
         <Route path="/create/checkout" element={<Checkout />} />
         <Route path="/order-success" element={<OrderSuccess />} />
+
+        {/* Admin (Outside Tabs) */}
+        <Route path="/admin/promos" element={<AdminPromos />} />
       </Routes>
 
       {!hideTabs && <TabBar />}

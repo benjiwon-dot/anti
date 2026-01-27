@@ -11,7 +11,12 @@ const ASSETS = {
     travel: "/assets/hero_4_travel.jpg"
 };
 
-const slideshowImages = [ASSETS.dog, ASSETS.family, ASSETS.couple, ASSETS.travel];
+import heroNew1 from '../assets/hero_new_1.jpg';
+import heroNew2 from '../assets/hero_new_2.jpg';
+import heroNew3 from '../assets/hero_new_3.jpg';
+import heroNew4 from '../assets/hero_new_4.jpg';
+
+const slideshowImages = [heroNew1, heroNew2, heroNew3, heroNew4];
 
 export default function Home() {
     const navigate = useNavigate();
@@ -22,11 +27,11 @@ export default function Home() {
     useEffect(() => {
         const slideshowTimer = setInterval(() => {
             setSlideshowIndex(prev => (prev + 1) % slideshowImages.length);
-        }, 3000);
+        }, 2000);
 
         const billboardTimer = setInterval(() => {
             setBillboardIndex(prev => (prev + 1) % 4);
-        }, 4000);
+        }, 2000);
 
         return () => {
             clearInterval(slideshowTimer);

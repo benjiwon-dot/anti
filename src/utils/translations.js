@@ -127,6 +127,17 @@ export const STRINGS = {
         cartEmpty: "Your cart is empty. Please add some tiles first.",
         fillRequired: "Please fill in all required shipping fields.",
 
+        // Payment & Auth
+        promptpay: "PromptPay QR",
+        truemoney: "TrueMoney (App)",
+        signUpGoogle: "Sign up with Google",
+        createAccount: "Create account",
+        scanQrCode: "Scan this QR code to pay.",
+        amount: "Amount",
+        alertTrueMoneyFail: "TrueMoney app not installed or cannot be opened. Please try again on a mobile device.",
+        alertFillShipping: "Please fill in all shipping information.",
+        optionalSuffix: "(Optional)",
+
         // Promo Codes
         promoHaveCode: "Have a code?",
         promoEnterCode: "Enter promo code",
@@ -313,6 +324,17 @@ export const STRINGS = {
         placeOrder: "สั่งซื้อสินค้า",
         cartEmpty: "ตะกร้าของคุณว่างเปล่า โปรดเลือกรูปภาพก่อน",
         fillRequired: "โปรดกรอกข้อมูลการจัดส่งให้ครบถ้วน",
+
+        // Payment & Auth
+        promptpay: "พร้อมเพย์ QR",
+        truemoney: "ทรูมันนี่ (แอป)",
+        signUpGoogle: "ลงทะเบียนด้วย Google",
+        createAccount: "สร้างบัญชี",
+        scanQrCode: "สแกน QR code นี้เพื่อชำระเงิน",
+        amount: "ยอดชำระ",
+        alertTrueMoneyFail: "ไม่พบแอป TrueMoney หรือไม่สามารถเปิดได้ กรุณาลองใหม่บนมือถือ",
+        alertFillShipping: "กรุณากรอกข้อมูลการจัดส่งให้ครบถ้วน",
+        optionalSuffix: "(ไม่บังคับ)",
 
         // Promo Codes
         promoHaveCode: "มีโค้ดส่วนลด?",

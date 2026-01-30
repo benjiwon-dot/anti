@@ -40,7 +40,7 @@ export default function Profile() {
             title: t.account,
             items: [
                 user ? {
-                    title: t.signOut || "Sign Out",
+                    title: (t as any).signOut || "Sign Out",
                     icon: LogOut, // Using LogOut for better UX
                     subtitle: user.email,
                     onClick: handleLogout,

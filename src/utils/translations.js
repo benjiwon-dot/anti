@@ -208,6 +208,21 @@ export const STRINGS = {
         saveCheckout: "Save & Checkout",
         next: "Next",
         printArea: "Print area (20×20)",
+        // Auth
+        "auth.loginTab": "Log In",
+        "auth.signupTab": "Sign Up",
+        "auth.emailLabel": "Email",
+        "auth.passwordLabel": "Password",
+        "auth.confirmPasswordLabel": "Confirm Password",
+        "auth.loginAction": "Log In",
+        "auth.signupAction": "Create Account",
+        "auth.passwordMismatch": "Passwords do not match",
+        "auth.signinApple": "Continue with Apple",
+        "auth.continueEmail": "Continue with email",
+        "auth.appleNotConfigured": "Apple Sign-In is not configured yet.",
+
+        // Checkout refined
+        "checkout.previewClose": "Close",
     },
     TH: {
         // Navigation
@@ -224,6 +239,23 @@ export const STRINGS = {
         permissionDeniedBody: "เราต้องการสิทธิ์เข้าถึงรูปภาพเพื่อสร้าง Memotiles โปรดเปิดสิทธิ์ในการตั้งค่า",
         openSettings: "เปิดการตั้งค่า",
         cancel: "ยกเลิก",
+
+        // Auth
+        "auth.loginTab": "เข้าสู่ระบบ",
+        "auth.signupTab": "ลงทะเบียน",
+        "auth.emailLabel": "อีเมล",
+        "auth.passwordLabel": "รหัสผ่าน",
+        "auth.confirmPasswordLabel": "ยืนยันรหัสผ่าน",
+        "auth.loginAction": "เข้าสู่ระบบ",
+        "auth.signupAction": "สร้างบัญชี",
+        "auth.passwordMismatch": "รหัสผ่านไม่ตรงกัน",
+        "auth.signinApple": "ดำเนินการต่อด้วย Apple",
+        "auth.continueEmail": "ดำเนินการต่อด้วยอีเมล",
+        "auth.appleNotConfigured": "การเข้าสู่ระบบด้วย Apple ยังไม่พร้อมใช้งาน",
+
+        // Checkout refined
+        "checkout.previewClose": "ปิด",
+        printArea: "พื้นที่พิมพ์ (20×20 ซม.)",
 
         // Home
         heroHeadlineLine1: "ช่วงเวลาที่คุณรัก",

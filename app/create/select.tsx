@@ -28,15 +28,16 @@ export default function PhotoSelect() {
     const [selectedPreview, setSelectedPreview] = useState<string | null>(null);
 
     const numColumns = 3;
+    const spacing = 0; // No gap between images
     const screenWidth = Dimensions.get('window').width;
-    const itemSize = screenWidth / numColumns;
+    const itemSize = (screenWidth - (spacing * (numColumns - 1))) / numColumns;
 
     // Render Grid Item
     const renderItem = ({ item }: { item: any }) => (
-        <Pressable onPress={() => setSelectedPreview(item.uri)}>
+        <Pressable onPress={() => setSelectedPreview(item.uri)} style={{ width: itemSize, height: itemSize, marginBottom: spacing }}>
             <Image
                 source={{ uri: item.uri }}
-                style={{ width: itemSize, height: itemSize }}
+                style={StyleSheet.absoluteFillObject}
                 contentFit="cover"
                 transition={200}
             />
@@ -62,9 +63,10 @@ export default function PhotoSelect() {
                 renderItem={renderItem}
                 keyExtractor={(item) => item.uri}
                 numColumns={numColumns}
+                columnWrapperStyle={{ gap: spacing }}
                 contentContainerStyle={{
-                    paddingTop: 100, // Header height + spacing
-                    paddingBottom: 120, // Bottom bar + spacing
+                    paddingTop: 56 + insets.top, // Header height
+                    paddingBottom: 100 + insets.bottom, // Bottom bar + spacing
                 }}
                 showsVerticalScrollIndicator={false}
             />

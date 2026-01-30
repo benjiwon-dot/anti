@@ -112,11 +112,13 @@ export default function Index() {
         }
 
         const result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            mediaTypes: ImagePicker.MediaTypeOptions.Images, // ✅ 여기로 되돌리기
             allowsMultipleSelection: true,
             selectionLimit: 20,
             quality: 1,
         });
+
+
 
         if (!result.canceled && result.assets?.length) {
             setPhotos(result.assets);

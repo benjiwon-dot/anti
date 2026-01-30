@@ -24,7 +24,30 @@ type SerializableAsset = Pick<
     | "mimeType"
     | "duration"
     | "exif"
->;
+> & {
+    edits?: {
+        crop: { x: number; y: number; width: number; height: number };
+        filterId: string;
+        rotate?: number;
+        // Exact UI state for restoring editor
+        ui?: {
+            crop: { x: number; y: number; scale: number };
+            filterId: string;
+        };
+        // Final committed crop (pixel-based)
+        committed?: {
+            cropPx: { x: number; y: number; width: number; height: number };
+            filterId: string;
+        };
+    };
+    output?: {
+        printUri: string;
+        previewUri: string;
+        quantity: number;
+        printWidth?: number;
+        printHeight?: number;
+    };
+};
 
 type DraftPayload = {
     photos: SerializableAsset[];
@@ -40,6 +63,7 @@ interface PhotoContextType {
 
     setPhotos: (photos: ImagePickerAsset[], opts?: { persist?: boolean; step?: DraftStep }) => Promise<void>;
     addPhotos: (newPhotos: ImagePickerAsset[], opts?: { persist?: boolean; step?: DraftStep }) => Promise<void>;
+    updatePhoto: (index: number, updates: Partial<SerializableAsset>) => Promise<void>;
 
     clearPhotos: () => void;
 
@@ -70,6 +94,8 @@ function toSerializableAsset(a: ImagePickerAsset): SerializableAsset {
         mimeType: a.mimeType,
         duration: a.duration,
         exif: a.exif,
+        edits: (a as any).edits,
+        output: (a as any).output,
     };
 }
 
@@ -167,6 +193,17 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
         });
     };
 
+    const updatePhoto: PhotoContextType["updatePhoto"] = async (index, updates) => {
+        setPhotosState((prev) => {
+            const newPhotos = [...prev];
+            if (!newPhotos[index]) return prev;
+            newPhotos[index] = { ...newPhotos[index], ...updates };
+            // Update draft immediately
+            saveDraft("editor", { photos: newPhotos, currentIndex });
+            return newPhotos;
+        });
+    };
+
     const clearPhotos = () => {
         setPhotosState([]);
         setCurrentIndexState(0);
@@ -189,6 +226,7 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
 
             setPhotos,
             addPhotos,
+            updatePhoto,
             clearPhotos,
 
             setCurrentIndex,

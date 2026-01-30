@@ -10,13 +10,24 @@
       "favicon": "./public/favicon.ico"
     },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      "expo-web-browser"
     ],
     "android": {
       "package": "com.anonymous.memotileappanti"
     },
     "ios": {
       "bundleIdentifier": "com.anonymous.memotileappanti"
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "998b0866-55ab-44aa-a1b1-9b82af8c3fe1"
+      },
+      // ✅ 여기 추가
+      "googleWebClientId": "108297942985762814919",
+      "googleIosClientId": "108297942985762814919",
+      "googleAndroidClientId": "108297942985762814919"
     }
   }
 }

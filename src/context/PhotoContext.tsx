@@ -8,6 +8,8 @@ import React, {
 } from "react";
 import type { ImagePickerAsset } from "expo-image-picker";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
+import * as FileSystem from "expo-file-system";
 
 type DraftStep = "select" | "editor";
 
@@ -25,6 +27,7 @@ type SerializableAsset = Pick<
     | "duration"
     | "exif"
 > & {
+    cachedPreviewUri?: string;
     edits?: {
         crop: { x: number; y: number; width: number; height: number };
         filterId: string;
@@ -92,8 +95,9 @@ function toSerializableAsset(a: ImagePickerAsset): SerializableAsset {
         fileName: a.fileName,
         fileSize: a.fileSize,
         mimeType: a.mimeType,
-        duration: a.duration,
-        exif: a.exif,
+        duration: (a as any).duration,
+        exif: (a as any).exif,
+        cachedPreviewUri: (a as any).cachedPreviewUri,
         edits: (a as any).edits,
         output: (a as any).output,
     };
@@ -103,6 +107,44 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
     const [photos, setPhotosState] = useState<ImagePickerAsset[]>([]);
     const [currentIndex, setCurrentIndexState] = useState<number>(0);
     const [hasDraft, setHasDraft] = useState<boolean>(false);
+
+    // Background generation queue to avoid multiple simultaneous manipulations
+    const generationQueue = React.useRef<Set<string>>(new Set());
+
+    const generatePreview = async (asset: ImagePickerAsset, index: number) => {
+        const id = asset.assetId || asset.uri;
+        if (generationQueue.current.has(id)) return;
+        if ((asset as any).cachedPreviewUri) return;
+
+        generationQueue.current.add(id);
+        try {
+            let inputUri = asset.uri;
+            if (inputUri.startsWith("content://")) {
+                const base = (FileSystem as any).cacheDirectory ?? (FileSystem as any).documentDirectory;
+                const dest = `${base}cache_pre_${Date.now()}.jpg`;
+                await FileSystem.copyAsync({ from: inputUri, to: dest });
+                inputUri = dest;
+            }
+
+            const result = await manipulateAsync(
+                inputUri,
+                [{ resize: { width: 1000 } }],
+                { compress: 0.8, format: SaveFormat.JPEG }
+            );
+
+            setPhotosState(prev => {
+                const newPhotos = [...prev];
+                if (newPhotos[index] && (newPhotos[index].assetId === asset.assetId || newPhotos[index].uri === asset.uri)) {
+                    newPhotos[index] = { ...newPhotos[index], cachedPreviewUri: result.uri } as any;
+                }
+                return newPhotos;
+            });
+        } catch (e) {
+            console.warn("Background preview generation failed", e);
+        } finally {
+            generationQueue.current.delete(id);
+        }
+    };
 
     // 앱 시작 시 draft 존재 여부만 빠르게 체크 (배너용)
     useEffect(() => {
@@ -177,6 +219,9 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
         if (opts?.persist) {
             await saveDraft(opts.step ?? "select", { photos: newPhotos, currentIndex: 0 });
         }
+
+        // Trigger background generation for the first few photos
+        newPhotos.slice(0, 5).forEach((p, i) => generatePreview(p, i));
     };
 
     const addPhotos: PhotoContextType["addPhotos"] = async (newPhotos, opts) => {
@@ -189,6 +234,11 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
                 // setState 내부라 즉시 저장을 위해 merged를 override로 전달
                 saveDraft(opts.step ?? "select", { photos: merged, currentIndex });
             }
+
+            // Trigger background generation for newly added photos
+            const startIdx = prev.length;
+            filtered.forEach((p, i) => generatePreview(p, startIdx + i));
+
             return merged;
         });
     };

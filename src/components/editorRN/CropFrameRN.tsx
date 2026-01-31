@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState, useImperativeHandle } from "react";
+import React, { useState, useEffect, useMemo, forwardRef, useImperativeHandle } from "react";
 import { View, StyleSheet, Dimensions, Image as RNImage, Text } from "react-native";
 import { GestureDetector, Gesture } from "react-native-gesture-handler";
 import Animated, {
@@ -6,9 +6,10 @@ import Animated, {
     useAnimatedStyle,
     withTiming,
     runOnJS,
+    useDerivedValue,
 } from "react-native-reanimated";
 import FilteredImageSkia from "./FilteredImageSkia";
-import { ColorMatrix } from "../../utils/colorMatrix";
+import { ColorMatrix, IDENTITY } from "../../utils/colorMatrix";
 import { useLanguage } from "../../context/LanguageContext";
 import { clampTransformToCoverFrame } from "../../utils/cropMath";
 
@@ -19,16 +20,17 @@ const MARGIN = (PREVIEW_SIZE - CROP_SIZE) / 2;
 
 export type Crop = { x: number; y: number; scale: number };
 
-type Props = {
+interface Props {
     imageSrc: string;
+    imageWidth: number;
+    imageHeight: number;
     crop: Crop;
-    onChange: (newCrop: Crop) => void;
+    onChange: (crop: Crop) => void;
     matrix: ColorMatrix;
-};
+}
 
-const CropFrameRN = React.forwardRef((props: Props, ref) => {
-    const { imageSrc, crop, onChange, matrix } = props;
-    const [imgSize, setImgSize] = useState({ w: 1, h: 1 });
+const CropFrameRN = forwardRef(({ imageSrc, imageWidth, imageHeight, crop, onChange, matrix }: Props, ref) => {
+    const [imgSize, setImgSize] = useState({ w: imageWidth || 0, h: imageHeight || 0 });
 
     const translateX = useSharedValue(crop?.x ?? 0);
     const translateY = useSharedValue(crop?.y ?? 0);
@@ -37,6 +39,7 @@ const CropFrameRN = React.forwardRef((props: Props, ref) => {
     const savedTranslateX = useSharedValue(crop?.x ?? 0);
     const savedTranslateY = useSharedValue(crop?.y ?? 0);
     const savedScale = useSharedValue(crop?.scale ?? 1);
+    const isGesturing = useSharedValue(false);
 
     useImperativeHandle(ref, () => ({
         getLatestCrop: () => {
@@ -45,15 +48,15 @@ const CropFrameRN = React.forwardRef((props: Props, ref) => {
     }));
 
     useEffect(() => {
-        if (!imageSrc) return;
-        RNImage.getSize(
-            imageSrc,
-            (w, h) => setImgSize({ w, h }),
-            (err) => console.error("RNImage.getSize failed:", err)
-        );
-    }, [imageSrc]);
+        if (imageWidth && imageHeight) {
+            setImgSize({ w: imageWidth, h: imageHeight });
+        }
+    }, [imageWidth, imageHeight]);
 
     useEffect(() => {
+        // ✅ Prevent snap-back: if we are currently gesturing, don't overwrite with old prop values
+        if (isGesturing.value) return;
+
         translateX.value = crop.x;
         translateY.value = crop.y;
         scale.value = crop.scale;
@@ -62,6 +65,11 @@ const CropFrameRN = React.forwardRef((props: Props, ref) => {
         savedTranslateY.value = crop.y;
         savedScale.value = crop.scale;
     }, [crop]);
+
+    // ✅ Use DerivedValues to ensure worklet sees stable sizes without re-rendering logic
+    const baseScaleValue = useDerivedValue(() => {
+        return Math.max(PREVIEW_SIZE / imgSize.w, PREVIEW_SIZE / imgSize.h);
+    }, [imgSize]);
 
     const { baseScale, minScale } = useMemo(() => {
         const bs = Math.max(PREVIEW_SIZE / imgSize.w, PREVIEW_SIZE / imgSize.h);
@@ -72,15 +80,15 @@ const CropFrameRN = React.forwardRef((props: Props, ref) => {
         "worklet";
         const s = Math.max(minScale, Math.min(sc, 4.0));
 
-        const rW = imgSize.w * baseScale;
-        const rH = imgSize.h * baseScale;
+        const rW = imgSize.w * baseScaleValue.value;
+        const rH = imgSize.h * baseScaleValue.value;
         const rX = (PREVIEW_SIZE - rW) / 2;
         const rY = (PREVIEW_SIZE - rH) / 2;
 
         const renderedRect = { x: rX, y: rY, width: rW, height: rH };
         const frameRect = {
-            x: (PREVIEW_SIZE - CROP_SIZE) / 2,
-            y: (PREVIEW_SIZE - CROP_SIZE) / 2,
+            x: MARGIN,
+            y: MARGIN,
             width: CROP_SIZE,
             height: CROP_SIZE,
         };
@@ -97,6 +105,9 @@ const CropFrameRN = React.forwardRef((props: Props, ref) => {
     const panGesture = useMemo(
         () =>
             Gesture.Pan()
+                .onBegin(() => {
+                    isGesturing.value = true;
+                })
                 .onUpdate((e) => {
                     translateX.value = savedTranslateX.value + e.translationX;
                     translateY.value = savedTranslateY.value + e.translationY;
@@ -112,7 +123,12 @@ const CropFrameRN = React.forwardRef((props: Props, ref) => {
                     savedTranslateX.value = clamped.x;
                     savedTranslateY.value = clamped.y;
                     savedScale.value = clamped.scale;
+
+                    // ✅ Commit only on onEnd to prevent React re-render churn
                     runOnJS(onChange)(clamped);
+                })
+                .onFinalize(() => {
+                    isGesturing.value = false;
                 }),
         [baseScale, minScale]
     );
@@ -120,6 +136,9 @@ const CropFrameRN = React.forwardRef((props: Props, ref) => {
     const pinchGesture = useMemo(
         () =>
             Gesture.Pinch()
+                .onBegin(() => {
+                    isGesturing.value = true;
+                })
                 .onUpdate((e) => {
                     scale.value = clampValues(
                         translateX.value,
@@ -135,13 +154,18 @@ const CropFrameRN = React.forwardRef((props: Props, ref) => {
                     );
                     scale.value = withTiming(clamped.scale);
                     savedScale.value = clamped.scale;
+
+                    // ✅ Commit only on onEnd to prevent React re-render churn
                     runOnJS(onChange)(clamped);
+                })
+                .onFinalize(() => {
+                    isGesturing.value = false;
                 }),
         [baseScale, minScale]
     );
 
     const composedGesture = useMemo(
-        () => Gesture.Simultaneous(panGesture, pinchGesture),
+        () => Gesture.Race(panGesture, pinchGesture),
         [panGesture, pinchGesture]
     );
 
@@ -153,17 +177,30 @@ const CropFrameRN = React.forwardRef((props: Props, ref) => {
      * scale → translate 순서
      * (cropMath와 좌표계 일치)
      */
-    const animatedImageStyle = useAnimatedStyle(() => ({
-        width: w0,
-        height: h0,
-        transform: [
-            { translateX: -w0 / 2 },
-            { translateY: -h0 / 2 },
-            { scale: scale.value },
-            { translateX: translateX.value },
-            { translateY: translateY.value },
-        ],
-    }));
+    const animatedImageStyle = useAnimatedStyle(() => {
+        const bs = baseScaleValue.value;
+        const w = imgSize.w * bs;
+        const h = imgSize.h * bs;
+        return {
+            width: w,
+            height: h,
+            transform: [
+                { translateX: -w / 2 },
+                { translateY: -h / 2 },
+                { scale: scale.value },
+                { translateX: translateX.value },
+                { translateY: translateY.value },
+            ],
+        };
+    });
+
+    const childStyle = useAnimatedStyle(() => {
+        const bs = baseScaleValue.value;
+        return {
+            width: imgSize.w * bs,
+            height: imgSize.h * bs,
+        };
+    });
 
     if (!imageSrc) return null;
 
@@ -173,14 +210,27 @@ const CropFrameRN = React.forwardRef((props: Props, ref) => {
         <GestureDetector gesture={composedGesture}>
             <View style={styles.container}>
                 <View style={styles.previewWrap}>
-                    {/* Background */}
                     <Animated.View style={[styles.centeredImage, animatedImageStyle]}>
-                        <FilteredImageSkia
-                            uri={imageSrc}
-                            width={w0}
-                            height={h0}
-                            matrix={matrix}
+                        <Animated.Image
+                            source={{ uri: imageSrc }}
+                            style={childStyle}
+                            resizeMode="cover"
                         />
+                        {/* 
+                            Visual Filter Layer:
+                            Overlaid on top of the base image.
+                            `pointerEvents="none"` ensures it doesn't block gestures.
+                            Only render FilteredImageSkia if a filter is actually applied.
+                        */}
+                        {matrix.some((v, i) => v !== IDENTITY[i]) && (
+                            <FilteredImageSkia
+                                uri={imageSrc}
+                                width={imgSize.w * baseScale}
+                                height={imgSize.h * baseScale}
+                                matrix={matrix}
+                                style={StyleSheet.absoluteFillObject as any}
+                            />
+                        )}
                     </Animated.View>
 
                     {/* Overlays */}
@@ -189,16 +239,22 @@ const CropFrameRN = React.forwardRef((props: Props, ref) => {
                     <View style={styles.overlayLeft} pointerEvents="none" />
                     <View style={styles.overlayRight} pointerEvents="none" />
 
-                    {/* Crop Window */}
                     <View style={styles.cropWindow} pointerEvents="none">
                         <Animated.View style={[styles.centeredImage, animatedImageStyle]}>
-                            <FilteredImageSkia
-                                key={`main:${imageSrc}:${matrix.join(",")}`}
-                                uri={imageSrc}
-                                width={w0}
-                                height={h0}
-                                matrix={matrix}
+                            <Animated.Image
+                                source={{ uri: imageSrc }}
+                                style={childStyle}
+                                resizeMode="cover"
                             />
+                            {matrix.some((v, i) => v !== IDENTITY[i]) && (
+                                <FilteredImageSkia
+                                    uri={imageSrc}
+                                    width={imgSize.w * baseScale}
+                                    height={imgSize.h * baseScale}
+                                    matrix={matrix}
+                                    style={StyleSheet.absoluteFillObject as any}
+                                />
+                            )}
                         </Animated.View>
                     </View>
                 </View>

@@ -1,11 +1,29 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
+import {
+    View,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    StyleSheet,
+    Alert,
+    ActivityIndicator,
+    KeyboardAvoidingView,
+    Platform,
+    ScrollView
+} from 'react-native';
 import { useRouter } from 'expo-router';
-import { signUpWithEmail, signInWithEmail } from '../utils/firebaseAuth';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLanguage } from '../context/LanguageContext';
+import {
+    createUserWithEmailAndPassword,
+    signInWithEmailAndPassword,
+    sendEmailVerification,
+    reload,
+} from "firebase/auth";
+import { auth } from "../lib/firebase";
+import { resetPassword } from "../lib/firebaseAuth";
 
 export default function AuthEmailScreen() {
     const router = useRouter();
@@ -19,8 +37,11 @@ export default function AuthEmailScreen() {
     const [loading, setLoading] = useState(false);
 
     const handleAuth = async () => {
-        if (!email.trim() || !password.trim()) {
-            Alert.alert("Error", "Please fill in all fields.");
+        const emailTrim = (email ?? "").trim();
+        const passwordTrim = password ?? "";
+
+        if (!emailTrim || !passwordTrim) {
+            Alert.alert("Error", t['auth.invalidEmail'] || "Please enter email and password.");
             return;
         }
 
@@ -32,29 +53,87 @@ export default function AuthEmailScreen() {
         setLoading(true);
         try {
             if (isSignUp) {
-                await signUpWithEmail(email, password);
-                router.back();
+                const cred = await createUserWithEmailAndPassword(auth, emailTrim, passwordTrim);
+                await sendEmailVerification(cred.user);
+
+                Alert.alert(
+                    t['auth.verificationSentTitle'] || "Verification email sent",
+                    t['auth.verificationSentBody'] || "Please check your inbox and verify your email."
+                );
+                setIsSignUp(false); // Switch to login tab
             } else {
-                await signInWithEmail(email, password);
+                const { user } = await signInWithEmailAndPassword(auth, emailTrim, passwordTrim);
+
+                if (!user.emailVerified) {
+                    await sendEmailVerification(user);
+                    Alert.alert(
+                        t['auth.verificationRequiredTitle'] || "Email verification required",
+                        t['auth.verificationRequiredBody'] || "Please verify your email first."
+                    );
+                    return;
+                }
+
                 router.back();
             }
         } catch (error: any) {
             console.error("Auth Error:", error);
-            let msg = error.message;
-            if (msg.includes("api-key-not-valid")) {
+            const code = error?.code ?? "";
+            let msg = error?.message ?? "Authentication failed.";
+
+            if (code === "auth/invalid-credential") {
+                msg = "이메일 또는 비밀번호가 올바르지 않습니다. 비밀번호를 잊으셨다면 재설정을 진행하세요.";
+            } else if (code === "auth/email-already-in-use") {
+                msg = "이미 가입된 이메일입니다. 로그인 탭에서 로그인해주세요.";
+            } else if (code === "auth/weak-password") {
+                msg = "비밀번호가 너무 약합니다. 6자 이상으로 설정해주세요.";
+            } else if (code === "auth/invalid-email") {
+                msg = "이메일 형식이 올바르지 않습니다.";
+            } else if (code === "auth/network-request-failed") {
+                msg = "네트워크 오류입니다. 인터넷 연결을 확인해주세요.";
+            } else if (msg.includes("api-key-not-valid")) {
                 msg = "Firebase 설정(apiKey)을 확인하세요. EXPO_PUBLIC_FIREBASE_API_KEY가 로드되지 않았습니다.";
-            } else if (error.code === 'auth/email-already-in-use') {
-                msg = "Email already in use.";
-            } else if (error.code === 'auth/invalid-email') {
-                msg = "Invalid email address.";
-            } else if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') {
-                msg = "Invalid email or password.";
-            } else if (error.code === 'auth/weak-password') {
-                msg = "Password should be at least 6 characters.";
             }
-            Alert.alert("Authentication Failed", msg);
+
+            Alert.alert(t['failedTitle'] || "Failed", msg);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const handleRefreshVerification = async () => {
+        try {
+            if (!auth.currentUser) {
+                Alert.alert(t['auth.refresh'] || "Refresh", t['auth.notLoggedIn'] || "Not logged in.");
+                return;
+            }
+
+            setLoading(true);
+            await reload(auth.currentUser);
+
+            if (auth.currentUser.emailVerified) {
+                Alert.alert(t['auth.verifiedSuccess'] || "Verified ✅", t['auth.verifiedSuccessBody'] || "Verified.");
+                router.back();
+            } else {
+                Alert.alert(t['auth.notVerifiedYet'] || "Not verified", t['auth.notVerifiedYetBody'] || "Not verified.");
+            }
+        } catch (e) {
+            Alert.alert(t['auth.refresh'] || "Refresh", t['auth.refreshFailed'] || "Failed.");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleForgotPassword = async () => {
+        try {
+            const emailTrim = (email ?? "").trim();
+            if (!emailTrim) {
+                Alert.alert("Error", t['auth.enterEmailFirst'] || "Please enter your email address first.");
+                return;
+            }
+            await resetPassword(emailTrim);
+            Alert.alert(t['auth.resetSentTitle'] || "Password reset email sent", t['auth.resetSentBody'] || "Please check your inbox for instructions to reset your password.");
+        } catch (e: any) {
+            Alert.alert(t['auth.resetFailed'] || "Reset failed", t['auth.resetFailed'] || "Failed to reset password.");
         }
     };
 
@@ -152,6 +231,22 @@ export default function AuthEmailScreen() {
                             )}
                         </TouchableOpacity>
 
+                        {/* Extra Actions */}
+                        {!isSignUp && (
+                            <View style={styles.extraActions}>
+                                <TouchableOpacity onPress={handleForgotPassword}>
+                                    <Text style={styles.secondaryBtnText}>{t['auth.forgotPassword'] || "Forgot password?"}</Text>
+                                </TouchableOpacity>
+
+                                {auth.currentUser && !auth.currentUser.emailVerified && (
+                                    <TouchableOpacity style={styles.refreshBtn} onPress={handleRefreshVerification}>
+                                        <Ionicons name="refresh" size={16} color="#007AFF" />
+                                        <Text style={styles.refreshBtnText}>{t['auth.refreshBtn'] || "I verified my email (Refresh)"}</Text>
+                                    </TouchableOpacity>
+                                )}
+                            </View>
+                        )}
+
                     </View>
                 </ScrollView>
             </KeyboardAvoidingView>
@@ -171,7 +266,7 @@ const styles = StyleSheet.create({
     },
     backBtn: { padding: 4 },
     headerTitle: { flex: 1, textAlign: 'center', fontWeight: '700', fontSize: 16 },
-    content: { flexGrow: 1, padding: 24, paddingTop: 40, justifyContent: 'flex-start' }, // Updated layout
+    content: { flexGrow: 1, padding: 24, paddingTop: 40, justifyContent: 'flex-start' },
     formContainer: { maxWidth: 400, width: '100%', alignSelf: 'center' },
 
     tabContainer: {
@@ -231,5 +326,8 @@ const styles = StyleSheet.create({
     },
     disabledBtn: { opacity: 0.7 },
     mainBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+    extraActions: { marginTop: 20, alignItems: 'center', gap: 16 },
+    secondaryBtnText: { color: '#666', fontSize: 14, textDecorationLine: 'underline' },
+    refreshBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8 },
+    refreshBtnText: { color: '#007AFF', fontWeight: '600', fontSize: 14 },
 });
-

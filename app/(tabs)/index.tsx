@@ -112,7 +112,7 @@ export default function Index() {
         }
 
         const result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.Images, // ✅ 여기로 되돌리기
+            mediaTypes: ImagePicker.MediaTypeOptions.Images,
             allowsMultipleSelection: true,
             selectionLimit: 20,
             quality: 1,

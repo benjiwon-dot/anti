@@ -1,5 +1,5 @@
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { Skia } from "@shopify/react-native-skia";
 import { IDENTITY, type ColorMatrix } from './colorMatrix';
 
@@ -37,10 +37,11 @@ export const applyFilterToUri = async (uri: string, matrix: ColorMatrix) => {
 
     // 3. Save
     const snapshot = surface.makeImageSnapshot();
-    const encoded = snapshot.encodeToData(3, 90); // 3 is JPEG
+    // 3 = JPEG, 4 = PNG in Skia
+    const encoded = snapshot.encodeToData(3, 90);
     if (!encoded) return uri;
 
-    const dest = `${(FileSystem as any).cacheDirectory}filtered_${Date.now()}.jpg`;
+    const dest = `${(FileSystem as any).cacheDirectory || ''}filtered_${Date.now()}.jpg`;
     await FileSystem.writeAsStringAsync(dest, encoded.toBase64(), {
         encoding: (FileSystem as any).EncodingType?.Base64 || 'base64',
     });

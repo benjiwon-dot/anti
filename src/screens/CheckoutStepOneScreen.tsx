@@ -1,5 +1,6 @@
 import React, { useMemo, useState, useEffect } from "react";
-import { View, Text, ScrollView, Image, TouchableOpacity, StyleSheet, SafeAreaView, TextInput, ActivityIndicator, Alert, Platform, Modal } from "react-native";
+import { View, Text, ScrollView, Image, TouchableOpacity, StyleSheet, TextInput, ActivityIndicator, Alert, Platform, Modal } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { usePhoto } from "../context/PhotoContext";
@@ -7,7 +8,8 @@ import { useLanguage } from "../context/LanguageContext";
 import { colors } from "../theme/colors";
 
 // Firebase / Auth / Promo
-import { getAuth, User } from "firebase/auth";
+import { auth } from "../lib/firebase";
+import { User } from "firebase/auth";
 import { useGoogleAuthRequest, signInWithGoogleCredential } from "../utils/firebaseAuth";
 import { verifyAndRedeemPromo, PromoResult, PromoType } from "../utils/promo";
 
@@ -26,7 +28,6 @@ export default function CheckoutStepOneScreen() {
     // Auth State
     const [currentUser, setCurrentUser] = useState<User | null>(null);
     const [isLoggingIn, setIsLoggingIn] = useState(false);
-    const auth = getAuth();
 
     // Promo State
     const [showPromo, setShowPromo] = useState(false);

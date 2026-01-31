@@ -59,7 +59,7 @@ export default function TabLayout() {
                 }}
             />
             <Tabs.Screen
-                name="orders"
+                name="myorder/index"
                 options={{
                     title: t.orders,
                     tabBarIcon: ({ color }) => (

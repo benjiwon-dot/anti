@@ -10,7 +10,7 @@ import {
     Auth
 } from "firebase/auth";
 import { makeRedirectUri } from "expo-auth-session";
-import { auth } from "./firebase"; // Import single auth instance
+import { auth } from "../lib/firebase"; // Import single auth instance
 
 WebBrowser.maybeCompleteAuthSession();
 

@@ -58,12 +58,22 @@ export default function EditorScreen() {
   const { photos, currentIndex, setCurrentIndex, saveDraft, updatePhoto } = usePhoto();
   const { t } = useLanguage();
 
-  const [resolved, setResolved] = useState<ResolvedInfo | null>(null);
-
   // Cache for resolved URIs
   const resolvedCache = useRef<Record<string, ResolvedInfo>>({});
 
   const currentPhoto = photos?.[currentIndex] as any;
+
+  const [resolved, setResolved] = useState<ResolvedInfo | null>(null);
+
+  // Instant gating info based on PhotoContext (might be original or cached preview)
+  const initialInfo = useMemo<ResolvedInfo | null>(() => {
+    if (!currentPhoto) return null;
+    return {
+      uri: (currentPhoto as any).cachedPreviewUri || currentPhoto.uri,
+      width: currentPhoto.width,
+      height: currentPhoto.height
+    };
+  }, [currentPhoto?.uri, (currentPhoto as any)?.cachedPreviewUri]);
 
   // Local UI state (Gestures)
   const [currentUi, setCurrentUi] = useState<EditState>(makeDefaultEdit());
@@ -76,12 +86,8 @@ export default function EditorScreen() {
   const [prevIndex, setPrevIndex] = useState(currentIndex);
   if (currentIndex !== prevIndex) {
     setPrevIndex(currentIndex);
-    const p = photos?.[currentIndex] as any;
-    if (p?.edits && p.edits.ui) {
-      setCurrentUi(p.edits.ui);
-    } else {
-      setCurrentUi(makeDefaultEdit());
-    }
+    // Do NOT call setResolved(null) or setCurrentUi here immediately
+    // Instead, we let the resolution useEffect handle the atomic swap.
   }
 
   // Remove the old useEffect-based sync
@@ -130,6 +136,14 @@ export default function EditorScreen() {
 
         if (alive) {
           resolvedCache.current[uri] = info;
+
+          // ✅ Atomic Swap: Update visual frame and UI state only when ready
+          const p = photos?.[currentIndex] as any;
+          if (p?.edits && p.edits.ui) {
+            setCurrentUi(p.edits.ui);
+          } else {
+            setCurrentUi(makeDefaultEdit());
+          }
           setResolved(info);
         }
       } catch (e) {
@@ -139,7 +153,12 @@ export default function EditorScreen() {
         try {
           const s = await getImageSizeAsync(uri);
           const info: ResolvedInfo = { uri, width: s.width, height: s.height };
-          if (alive) setResolved(info);
+          if (alive) {
+            const p = photos?.[currentIndex] as any;
+            if (p?.edits && p.edits.ui) setCurrentUi(p.edits.ui);
+            else setCurrentUi(makeDefaultEdit());
+            setResolved(info);
+          }
         } catch {
           if (alive) setResolved({ uri, width: 1, height: 1 });
         }
@@ -152,7 +171,10 @@ export default function EditorScreen() {
     };
   }, [currentPhoto?.uri]);
 
-  const displayUri = resolved?.uri ?? currentPhoto?.uri;
+  // ✅ activeResolved: prioritizes background-resized 1000px preview (resolved)
+  // falls back to initialInfo (uncached preview or original)
+  const activeResolved = resolved || initialInfo;
+  const displayUri = activeResolved?.uri || currentPhoto?.uri;
 
   // Filter Logic
   const activeFilterId = currentUi.filterId;
@@ -235,7 +257,8 @@ export default function EditorScreen() {
       }
 
       // 2. Export preview WITH filter
-      const previewExp = await generatePreviewExport(uiUri, cropRes, activeMatrix);
+      const matrixToApply = activeMatrix;
+      const previewExp = await generatePreviewExport(uiUri, cropRes, matrixToApply);
 
       // 3. Persist ALL states
       isSavingRef.current = true;
@@ -286,7 +309,7 @@ export default function EditorScreen() {
           };
 
           // Apply filter to high-res print as well
-          const printExp = await generatePrintExport(originalUri, origCrop, activeMatrix);
+          const printExp = await generatePrintExport(originalUri, origCrop, matrixToApply);
 
           await updatePhoto(currentIndex, {
             output: {
@@ -320,6 +343,9 @@ export default function EditorScreen() {
 
   if (!currentPhoto) return <View style={styles.loading}><ActivityIndicator /></View>;
 
+  // ✅ Editor Gating: Only render editor when image is resolved AND UI state is synced
+  const isReady = !!resolved && !!currentUi;
+
   return (
     <View style={styles.container}>
       <View style={{ paddingTop: insets.top }}>
@@ -332,13 +358,21 @@ export default function EditorScreen() {
       </View>
 
       <View style={styles.editorArea}>
-        <CropFrameRN
-          ref={cropRef}
-          imageSrc={displayUri}
-          crop={currentUi.crop}
-          onChange={(newCrop: any) => setCurrentUi((prev) => ({ ...prev, crop: newCrop }))}
-          matrix={activeMatrix}
-        />
+        {activeResolved ? (
+          <CropFrameRN
+            ref={cropRef}
+            imageSrc={activeResolved.uri}
+            imageWidth={activeResolved.width}
+            imageHeight={activeResolved.height}
+            crop={currentUi.crop}
+            onChange={(newCrop: any) => setCurrentUi((prev) => ({ ...prev, crop: newCrop }))}
+            matrix={activeMatrix}
+          />
+        ) : (
+          <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+            <ActivityIndicator size="large" color={colors.ink} />
+          </View>
+        )}
       </View>
 
       <View style={[styles.bottomBar, { paddingBottom: Math.max(20, insets.bottom) }]}>

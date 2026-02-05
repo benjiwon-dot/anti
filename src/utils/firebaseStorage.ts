@@ -1,7 +1,7 @@
 import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { app, db } from "../lib/firebase";
 import { doc, writeBatch } from "firebase/firestore";
-import * as FileSystem from 'expo-file-system/legacy';
+import * as FileSystem from 'expo-file-system';
 
 const storage = getStorage(app);
 

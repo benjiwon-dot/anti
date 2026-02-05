@@ -9,6 +9,15 @@ export interface OrderItem {
     // Web compat (Firestore fields)
     previewUrl?: string;        // downloadURL (filled after upload)
     printUrl?: string;          // downloadURL (filled after upload)
+    storagePath?: string;       // GCS path (e.g. orders/2026/id/items/0.jpg)
+    printStoragePath?: string;  // GCS path for high-res
+    index: number;
+    assets?: {
+        previewPath: string;
+        previewUrl: string;
+        printPath: string;
+        printUrl: string;
+    };
 
     quantity: number;
     filterId: string;
@@ -34,6 +43,7 @@ export interface OrderDoc {
     uid: string;
     orderCode: string; // 7-char code (e.g. ABC1234)
     itemsCount: number;
+    storageBasePath?: string;
     createdAt: any; // Timestamp | Date | number | string
     updatedAt: any;
     status: "paid" | "processing" | "printed" | "shipping" | "delivered" | "failed" | "refunded";
@@ -62,7 +72,7 @@ export interface OrderDoc {
         email: string;
     };
 
-    items: OrderItem[];
+    items?: OrderItem[]; // Optional in Header (moved to subcollection)
 
     payment: {
         provider: string;

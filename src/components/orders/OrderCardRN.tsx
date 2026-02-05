@@ -32,7 +32,7 @@ export default function OrderCardRN({ order, onPress }: Props) {
 
                 {/* Image strip */}
                 <View style={styles.imageStrip}>
-                    {order.items.slice(0, 5).map((item, idx) => (
+                    {order.items && order.items.slice(0, 5).map((item, idx) => (
                         <View key={idx} style={styles.stripItem}>
                             {(item.previewUrl || item.previewUri || item.src) ? (
                                 <Image
@@ -46,15 +46,20 @@ export default function OrderCardRN({ order, onPress }: Props) {
                             )}
                         </View>
                     ))}
-                    {order.items.length > 5 && (
+                    {order.items && order.items.length > 5 && (
                         <View style={styles.moreCount}>
                             <Text style={styles.moreCountText}>+{order.items.length - 5}</Text>
+                        </View>
+                    )}
+                    {!order.items && order.itemsCount > 0 && (
+                        <View style={[styles.stripImg, { backgroundColor: '#f0f0f0', alignItems: 'center', justifyContent: 'center', borderRadius: 6, width: 44, height: 44 }]}>
+                            <Ionicons name="images-outline" size={20} color="#ccc" />
                         </View>
                     )}
                 </View>
 
                 <View style={styles.bottomRow}>
-                    <Text style={styles.itemCount}>{order.items.length} {t.items}</Text>
+                    <Text style={styles.itemCount}>{order.itemsCount || order.items?.length || 0} {t.items}</Text>
                     <Text style={styles.totalPrice}>฿{order.total.toFixed(2)}</Text>
                 </View>
             </View>

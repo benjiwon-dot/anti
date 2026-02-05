@@ -9,7 +9,7 @@ import React, {
 import type { ImagePickerAsset } from "expo-image-picker";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
-import * as FileSystem from "expo-file-system/legacy";
+import * as FileSystem from "expo-file-system";
 
 type DraftStep = "select" | "editor";
 
@@ -50,6 +50,8 @@ type SerializableAsset = Pick<
         printWidth?: number;
         printHeight?: number;
     };
+    frameRect?: { x: number; y: number; width: number; height: number };
+    viewport?: { width: number; height: number };
 };
 
 type DraftPayload = {
@@ -100,6 +102,8 @@ function toSerializableAsset(a: ImagePickerAsset): SerializableAsset {
         cachedPreviewUri: (a as any).cachedPreviewUri,
         edits: (a as any).edits,
         output: (a as any).output,
+        frameRect: (a as any).frameRect,
+        viewport: (a as any).viewport,
     };
 }
 
@@ -110,6 +114,7 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
 
     // Background generation queue to avoid multiple simultaneous manipulations
     const generationQueue = React.useRef<Set<string>>(new Set());
+    const saveDraftTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const generatePreview = async (asset: ImagePickerAsset, index: number) => {
         const id = asset.assetId || asset.uri;
@@ -174,23 +179,31 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
     }, []);
 
     const saveDraft: PhotoContextType["saveDraft"] = async (step, override) => {
-        try {
-            const usePhotos = override?.photos ?? photos;
-            const useIndex = override?.currentIndex ?? currentIndex;
+        if (saveDraftTimer.current) clearTimeout(saveDraftTimer.current);
 
-            const payload: DraftPayload = {
-                photos: usePhotos.map(toSerializableAsset),
-                currentIndex: Math.max(0, Math.min(useIndex, Math.max(0, usePhotos.length - 1))),
-                step,
-                timestamp: Date.now(),
-            };
+        return new Promise((resolve, reject) => {
+            saveDraftTimer.current = setTimeout(async () => {
+                try {
+                    const usePhotos = override?.photos ?? photos;
+                    const useIndex = override?.currentIndex ?? currentIndex;
 
-            await AsyncStorage.setItem(DRAFT_KEY, JSON.stringify(payload));
-            if (__DEV__) console.log("[Draft] Saved/Updated step:", step);
-            setHasDraft(true);
-        } catch (e) {
-            console.error("Failed to save draft", e);
-        }
+                    const payload: DraftPayload = {
+                        photos: usePhotos.map(toSerializableAsset),
+                        currentIndex: Math.max(0, Math.min(useIndex, Math.max(0, usePhotos.length - 1))),
+                        step,
+                        timestamp: Date.now(),
+                    };
+
+                    await AsyncStorage.setItem(DRAFT_KEY, JSON.stringify(payload));
+                    if (__DEV__) console.log("[Draft] Saved/Updated step (debounced):", step);
+                    setHasDraft(true);
+                    resolve();
+                } catch (e) {
+                    console.error("Failed to save draft", e);
+                    reject(e);
+                }
+            }, 250);
+        });
     };
 
     const loadDraft: PhotoContextType["loadDraft"] = async () => {

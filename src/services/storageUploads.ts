@@ -1,8 +1,9 @@
 import * as FileSystem from "expo-file-system/legacy";
-import { ref, uploadString, getDownloadURL } from "firebase/storage";
+import { ref, getDownloadURL, uploadBytes } from "firebase/storage";
 import { doc, updateDoc } from "firebase/firestore";
-import { storage, db } from "../lib/firebase";
+import { storage, db, auth } from "../lib/firebase";
 import { OrderItem } from "../types/order";
+import { Buffer } from "buffer";
 
 type UploadKind = "preview" | "print";
 
@@ -13,6 +14,21 @@ function inferContentType(uri: string): string {
     if (u.endsWith(".jpeg") || u.endsWith(".jpg")) return "image/jpeg";
     if (u.endsWith(".heic") || u.endsWith(".heif")) return "image/heic";
     return "image/jpeg";
+}
+
+function yyyymmdd(d = new Date()): string {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}${m}${day}`;
+}
+
+function getBucket(): string {
+    // @ts-ignore
+    const b1 = storage?.app?.options?.storageBucket as string | undefined;
+    // optional env fallback
+    const b2 = process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET;
+    return (b1 || b2 || "").trim();
 }
 
 function guessExtFromContentType(ct: string): string {
@@ -53,7 +69,7 @@ async function withRetry<T>(fn: () => Promise<T>, opts?: { tries?: number; baseD
 
 /**
  * Uploads a local URI to Firebase Storage (RN/Expo-safe)
- * - strictly base64 uploadString
+ * - Avoids Blob/ArrayBufferView incompat by using Firebase Storage REST upload
  */
 export async function uploadLocalUriToStorage(params: {
     localUri: string;
@@ -66,7 +82,10 @@ export async function uploadLocalUriToStorage(params: {
 
     const contentType = inferContentType(localUri);
     const ext = guessExtFromContentType(contentType);
-    const storagePath = `orders/${uid}/${orderId}/items/${index}/${kind}.${ext}`;
+
+    // YYYYMMDD based path for better grouping
+    const dateKey = yyyymmdd();
+    const storagePath = `orders/${dateKey}/${orderId}/items/${index}_${kind}.${ext}`;
 
     if (__DEV__) {
         console.log(`[StorageUpload] uid=${uid}, orderId=${orderId}, path=${storagePath}`);
@@ -74,25 +93,30 @@ export async function uploadLocalUriToStorage(params: {
 
     try {
         const result = await withRetry(async () => {
-            // 1) base64 read (NO blob/ArrayBuffer pathway)
-            const base64 = await FileSystem.readAsStringAsync(localUri, {
-                encoding: FileSystem.EncodingType.Base64,
-            });
+            // 0) ensure file exists
+            const info = await FileSystem.getInfoAsync(localUri);
+            if (!info.exists || (info.size ?? 0) === 0) {
+                throw new Error(`File missing/empty: ${localUri}`);
+            }
 
-            // 2) guard: ensure non-empty
-            if (!base64 || base64.length === 0) throw new Error(`File content empty or read failed: ${localUri}`);
-
-            // 3) upload base64
+            // 1) Upload using Firebase SDK (works with Blob on iOS/Android)
             const storageRef = ref(storage, storagePath);
-            await uploadString(storageRef, base64, "base64", {
-                contentType,
-                cacheControl: "public,max-age=31536000",
+
+            // Standardize to JPEG for print/preview reliability
+            const uploadContentType = contentType.includes("heic") ? "image/jpeg" : contentType;
+
+            const response = await fetch(localUri);
+            const blob = await response.blob();
+
+            await uploadBytes(storageRef, blob, {
+                contentType: uploadContentType,
+                cacheControl: "public,max-age=31536000"
             });
 
             const downloadURL = await getDownloadURL(storageRef);
 
             if (__DEV__) {
-                console.log(`[StorageUpload] Success! path=${storagePath}`);
+                console.log(`[StorageUpload] Success! path=${storagePath}, url=${downloadURL.slice(0, 40)}...`);
             }
 
             return downloadURL;
@@ -122,6 +146,9 @@ export async function uploadOrderImages(params: { orderId: string; uid: string; 
             try {
                 const url = await uploadLocalUriToStorage({ localUri: item.previewUri, uid, orderId, index: i, kind: "preview" });
                 updatedItems[i].previewUrl = url;
+                // Save meta path for fallback/reconstruction
+                const dateKey = yyyymmdd();
+                updatedItems[i].storagePath = `orders/${dateKey}/${orderId}/items/${i}_preview.jpg`;
                 hasChanges = true;
                 console.log(`[StorageUpload] Preview ${i} uploaded`);
             } catch (e) {
@@ -133,6 +160,8 @@ export async function uploadOrderImages(params: { orderId: string; uid: string; 
             try {
                 const url = await uploadLocalUriToStorage({ localUri: item.printUri, uid, orderId, index: i, kind: "print" });
                 updatedItems[i].printUrl = url;
+                const dateKey = yyyymmdd();
+                updatedItems[i].printStoragePath = `orders/${dateKey}/${orderId}/items/${i}_print.jpg`;
                 hasChanges = true;
                 console.log(`[StorageUpload] Print ${i} uploaded`);
             } catch (e) {
@@ -142,7 +171,11 @@ export async function uploadOrderImages(params: { orderId: string; uid: string; 
     }
 
     if (hasChanges) {
-        await updateDoc(orderRef, { items: updatedItems });
-        console.log(`[StorageUpload] Firestore doc ${orderId} updated with downloadUrls`);
+        const dateKey = yyyymmdd();
+        await updateDoc(orderRef, {
+            items: updatedItems,
+            storageBasePath: `orders/${dateKey}/${orderId}`
+        });
+        console.log(`[StorageUpload] Firestore doc ${orderId} updated with downloadUrls and storagePaths`);
     }
 }

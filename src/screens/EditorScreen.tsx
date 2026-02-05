@@ -12,7 +12,7 @@ import {
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
-import * as FileSystem from "expo-file-system/legacy";
+import * as FileSystem from "expo-file-system";
 
 import { usePhoto } from "../context/PhotoContext";
 import { useLanguage } from "../context/LanguageContext";
@@ -27,7 +27,7 @@ import { FILTERS } from "../components/editorRN/filters";
 import { IDENTITY } from "../utils/colorMatrix";
 
 // Import Utils
-import { calculatePrecisionCrop } from "../utils/cropMath";
+import { calculatePrecisionCrop, defaultCenterCrop } from "../utils/cropMath";
 import { generatePreviewExport, generatePrintExport, bakeFilterFromCanvasSnapshot, withTimeout } from "../utils/editorLogic";
 import { exportQueue } from "../utils/exportQueue";
 
@@ -65,6 +65,8 @@ export default function EditorScreen() {
   const [currentUi, setCurrentUi] = useState<EditState>(makeDefaultEdit());
   const [viewportDim, setViewportDim] = useState<{ width: number; height: number } | null>(null);
   const [exportBakeInfo, setExportBakeInfo] = useState<{ uri: string; w: number; h: number } | null>(null);
+  const [isSwitchingPhoto, setIsSwitchingPhoto] = useState(false);
+  const [isCropReady, setIsCropReady] = useState(false);
 
   const isExporting = useRef(false);
   const cropRef = useRef<any>(null);
@@ -95,6 +97,7 @@ export default function EditorScreen() {
 
     const resolve = async () => {
       try {
+        setIsCropReady(false);
         let inputUri = uri;
         if (uri.startsWith("content://")) {
           const base = (FileSystem as any).cacheDirectory ?? (FileSystem as any).documentDirectory;
@@ -108,9 +111,20 @@ export default function EditorScreen() {
 
         if (alive) {
           resolvedCache.current[uri] = info;
-          const p = photos?.[currentIndex] as any;
-          setCurrentUi(p?.edits?.ui ? p.edits.ui : makeDefaultEdit());
           setResolved(info);
+          const p = photos?.[currentIndex] as any;
+          const savedUi = p?.edits?.ui;
+          if (savedUi) {
+            setCurrentUi(savedUi);
+          } else {
+            const vp = viewportDim || { width: 400, height: 400 };
+            const CROP_SIZE = Math.min(vp.width, vp.height) * 0.75;
+            setCurrentUi({
+              ...makeDefaultEdit(),
+              crop: defaultCenterCrop()
+            });
+          }
+          setIsCropReady(true);
         }
       } catch (e) {
         console.warn("Resolution failed", e);
@@ -118,12 +132,26 @@ export default function EditorScreen() {
           const s = await getImageSizeAsync(uri);
           const info: ResolvedInfo = { uri, width: s.width, height: s.height };
           if (alive) {
-            const p = photos?.[currentIndex] as any;
-            setCurrentUi(p?.edits?.ui ? p.edits.ui : makeDefaultEdit());
             setResolved(info);
+            const p = photos?.[currentIndex] as any;
+            const savedUi = p?.edits?.ui;
+            if (savedUi) {
+              setCurrentUi(savedUi);
+            } else {
+              const vp = viewportDim || { width: 400, height: 400 };
+              const CROP_SIZE = Math.min(vp.width, vp.height) * 0.75;
+              setCurrentUi({
+                ...makeDefaultEdit(),
+                crop: defaultCenterCrop()
+              });
+            }
+            setIsCropReady(true);
           }
         } catch {
-          if (alive) setResolved({ uri, width: 1, height: 1 });
+          if (alive) {
+            setResolved({ uri, width: 1, height: 1 });
+            setIsCropReady(true);
+          }
         }
       }
     };
@@ -241,43 +269,59 @@ export default function EditorScreen() {
           previewUri: finalPreviewUri,
           printUri: finalPrintUri,
           quantity: photo.output?.quantity || 1
-        }
+        },
+        frameRect,
+        viewport: vp
       });
 
-      // 6. High-res Print Export (Queue) - Only if NOT filtered (already high-enough or need real high-res)
-      // If filtered, we already set finalPrintUri above. If original, we need to crop from original high-res.
-      if (filterUi.filterId === "original") {
-        exportQueue.enqueue(async () => {
-          try {
-            let origW = photo.width, origH = photo.height;
-            if (!origW || !origH) {
-              const s = await manipulateAsync(photo.uri, [], {});
-              origW = s.width; origH = s.height;
-            }
-            const sx = origW / uiW;
-            const sy = origH / uiH;
-            const origCrop = {
-              x: Math.round(cropRes.x * sx),
-              y: Math.round(cropRes.y * sy),
-              width: Math.round(cropRes.width * sx),
-              height: Math.round(cropRes.height * sy)
-            };
-            const printRes = await generatePrintExport(photo.uri, origCrop, { srcW: origW, srcH: origH, viewW: uiW, viewH: uiH, viewCrop: cropRes });
-            await updatePhoto(idx, { output: { ...(photos[idx] as any).output, printUri: printRes.uri } });
-          } catch (err) { console.error(`[ExportQueue] High-res failed for ${idx}:`, err); }
-        }, `Print-${idx}`);
-      }
+      // 6. High-res Print Export (Queue)
+      exportQueue.enqueue(async () => {
+        try {
+          let origW = photo.width, origH = photo.height;
+          if (!origW || !origH) {
+            const s = await manipulateAsync(photo.uri, [], {});
+            origW = s.width; origH = s.height;
+          }
+
+          const CROP_SIZE_PX = frameRect.width; // 75% of viewport min dimension roughly
+          const finalCrop = calculatePrecisionCrop({
+            sourceSize: { width: origW, height: origH },
+            containerSize: { width: vp.width, height: vp.height },
+            frameRect: { ...frameRect },
+            transform: { scale: cropState.scale, translateX: cropState.x, translateY: cropState.y }
+          });
+
+          // If result is filtered, generatePrintExport might bake or just resize.
+          // But here we rely on the cropRes from original pixels.
+          const printRes = await generatePrintExport(photo.uri, finalCrop, {
+            srcW: origW,
+            srcH: origH,
+            viewW: vp.width,
+            viewH: vp.height,
+            viewCrop: finalCrop
+          });
+
+          await updatePhoto(idx, { output: { ...(photos[idx] as any).output, printUri: printRes.uri } });
+        } catch (err) {
+          console.error(`[ExportQueue] High-res failed for ${idx}:`, err);
+        }
+      }, `Print-${idx}`);
 
       // 7. Navigation
       if (idx < photos.length - 1) {
+        setIsSwitchingPhoto(true);
         requestAnimationFrame(() => {
-          setCurrentIndex(idx + 1);
-          setTimeout(() => { isTransitioningRef.current = false; }, 50);
+          requestAnimationFrame(() => {
+            setCurrentIndex(idx + 1);
+            setIsSwitchingPhoto(false);
+            setTimeout(() => { isTransitioningRef.current = false; }, 50);
+          });
         });
       } else {
         router.push("/create/checkout");
       }
     } catch (e) {
+      setIsSwitchingPhoto(false);
       console.error("[Next] HandleNext Error:", e);
       Alert.alert(t.failedTitle || "Error", t.failedBody || "Failed to process photo.");
       isTransitioningRef.current = false;
@@ -302,25 +346,27 @@ export default function EditorScreen() {
           if (width > 0 && height > 0) setViewportDim({ width, height });
         }}
       >
-        {activeResolved && viewportDim ? (
-          <CropFrameRN
-            key={`crop-${currentIndex}`}
-            ref={cropRef}
-            imageSrc={activeResolved.uri}
-            imageWidth={activeResolved.width}
-            imageHeight={activeResolved.height}
-            containerWidth={viewportDim.width}
-            containerHeight={viewportDim.height}
-            crop={currentUi.crop}
-            onChange={(newCrop: any) => setCurrentUi((prev) => ({ ...prev, crop: newCrop }))}
-            matrix={activeMatrix}
-            photoIndex={currentIndex}
-          />
-        ) : (
-          <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-            <ActivityIndicator size="large" color={colors.ink} />
-          </View>
-        )}
+        <View style={{ flex: 1, opacity: isSwitchingPhoto || !isCropReady ? 0 : 1 }}>
+          {isCropReady && activeResolved && viewportDim ? (
+            <CropFrameRN
+              key={`crop-${currentIndex}`}
+              ref={cropRef}
+              imageSrc={activeResolved.uri}
+              imageWidth={activeResolved.width}
+              imageHeight={activeResolved.height}
+              containerWidth={viewportDim.width}
+              containerHeight={viewportDim.height}
+              crop={currentUi.crop}
+              onChange={(newCrop: any) => setCurrentUi((prev) => ({ ...prev, crop: newCrop }))}
+              matrix={activeMatrix}
+              photoIndex={currentIndex}
+            />
+          ) : (
+            <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+              <ActivityIndicator size="large" color={colors.ink} />
+            </View>
+          )}
+        </View>
 
         {/* Hidden Snapshot Component (Mounted for Export Baking) */}
         {exportBakeInfo && (

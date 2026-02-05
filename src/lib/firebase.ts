@@ -28,6 +28,10 @@ export const auth = Platform.OS === 'web'
         persistence: getReactNativePersistence(AsyncStorage),
     });
 
+if (__DEV__) {
+    console.log("[Firebase] Configured with bucket:", firebaseConfig.storageBucket);
+}
+
 /**
  * GOOGLE OAUTH DEV UNBLOCK CHECKLIST:
  * 1. [ ] Create OAuth 2.0 Client IDs in Google Cloud Console:

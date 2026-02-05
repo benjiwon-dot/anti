@@ -34,16 +34,27 @@ export const bakeFilterFromCanvasSnapshot = async (
     if (!snapshot) throw new Error("[Filter] No snapshot provided to bake.");
 
     try {
-        const data = snapshot.encodeToBytes(ImageFormat.JPEG, 90);
+        // Ensure Buffer exists (Expo/RN safe)
+        const g = globalThis as any;
+        if (!g.Buffer) {
+            g.Buffer = Buffer;
+        }
+
+        const data = snapshot.encodeToBytes(ImageFormat.JPEG, 95);
         const dest = `${FileSystem.cacheDirectory}baked_${Date.now()}.jpg`;
 
-        await FileSystem.writeAsStringAsync(
-            dest,
-            Buffer.from(data).toString("base64"),
-            { encoding: FileSystem.EncodingType.Base64 }
-        );
+        const base64 = Buffer.from(data as any).toString("base64");
 
-        if (__DEV__) console.log(`[Filter] Snapshot bake success: ${dest.slice(-20)}`);
+        // Safety Guard
+        if (!base64 || base64.length < 32) {
+            throw new Error("[Filter] Empty or corrupted base64 generated from snapshot.");
+        }
+
+        await FileSystem.writeAsStringAsync(dest, base64, {
+            encoding: FileSystem.EncodingType.Base64,
+        });
+
+        if (__DEV__) console.log(`[Filter] Snapshot bake success: ${dest.slice(-30)}`);
         return dest;
     } catch (e) {
         console.error("[Filter] Snapshot bake failed:", e);
@@ -88,15 +99,15 @@ export const generatePrintExport = async (
     const safeH = Math.max(1, Math.min(cropRect.height, srcH - safeY));
 
     const longest = Math.max(safeW, safeH);
-    const targetW = longest > 4000 ? (safeW * 4000 / longest) : safeW;
+    const targetW = 5000;
 
     const result = await manipulateAsync(
         uri,
         [
             { crop: { originX: safeX, originY: safeY, width: safeW, height: safeH } },
-            { resize: { width: targetW } }
+            { resize: { width: targetW, height: targetW } } // Force square for print if possible
         ],
-        { compress: 0.9, format: SaveFormat.JPEG }
+        { compress: 0.95, format: SaveFormat.JPEG }
     );
 
     return { uri: result.uri, width: result.width, height: result.height };

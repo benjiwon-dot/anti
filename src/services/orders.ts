@@ -10,12 +10,12 @@ import {
     orderBy,
     onSnapshot,
     serverTimestamp,
-    updateDoc,
     DocumentReference,
 } from "firebase/firestore";
 import { db } from "../lib/firebase";
-import { uploadLocalUriToStorage } from "./storageUploads";
 import { OrderDoc, OrderItem } from "../types/order";
+import { buildOrderStorageBasePath, buildItemPreviewPath, buildItemPrintPath } from "../utils/storagePaths";
+import { uploadFileUriToStorage } from "./storageUpload";
 
 /**
  * Generates a random 7-character alphanumeric string.
@@ -27,26 +27,14 @@ function generateOrderCode(): string {
     return result;
 }
 
-/** simple concurrency limiter */
-async function runWithConcurrency(tasks: Array<() => Promise<void>>, concurrency = 2) {
-    const queue = [...tasks];
-    const workers = new Array(Math.max(1, concurrency)).fill(0).map(async () => {
-        while (queue.length) {
-            const t = queue.shift();
-            if (!t) break;
-            await t();
-        }
-    });
-    await Promise.all(workers);
-}
-
 /**
- * Creates a "DEV_FREE" order and uploads photos to Storage.
+ * Creates a "PAID" order and uploads photos to Storage.
+ * Uses the subcollection structure: orders/{orderId}/items/{itemId}
  */
 export async function createDevOrder(params: {
     uid: string;
     shipping: OrderDoc["shipping"];
-    photos: any[];
+    photos: any[]; // These are local photo objects from editor
     totals: {
         subtotal: number;
         discount: number;
@@ -62,76 +50,22 @@ export async function createDevOrder(params: {
 }): Promise<string> {
     const { uid, shipping, photos, totals, promoCode, locale = "EN" } = params;
 
-    // 1. Generate Order ID
+    if (!uid) throw new Error("User identifier (uid) is missing.");
+
+    // 1. Generate IDs (New doc for every order)
     const orderRef = doc(collection(db, "orders")) as DocumentReference;
     const orderId = orderRef.id;
     const orderCode = generateOrderCode();
 
-    // 2. Prepare Items
-    const items: OrderItem[] = photos.map((p, index) => ({
-        index,
-        quantity: p.quantity || 1,
-        previewUri: p.output?.previewUri || p.uri,
-        printUri: p.output?.printUri || p.uri,
-        filterId: p.edits?.filterId || "original",
-        filterParams: p.edits?.committed?.filterParams || p.edits?.filterParams || null,
-        cropPx: p.edits?.committed?.cropPx || null,
-        unitPrice: totals.subtotal / photos.length || 0,
-        lineTotal: (totals.subtotal / photos.length || 0) * (p.quantity || 1),
-        size: "20x20",
-    }));
+    // 2. Storage base path
+    const storageBasePath = buildOrderStorageBasePath(orderCode, new Date());
 
-    console.log(`[OrderService] Starting uploads for ${photos.length} items...`);
-
-    const updatedItems = [...items];
-
-    try {
-        if (!uid) throw new Error("User identifier (uid) is missing. Cannot upload photos.");
-
-        // Build upload tasks (preview + print per item), but run with limited concurrency
-        const tasks: Array<() => Promise<void>> = [];
-
-        updatedItems.forEach((item, i) => {
-            if (item.previewUri && !item.previewUrl) {
-                tasks.push(async () => {
-                    item.previewUrl = await uploadLocalUriToStorage({
-                        localUri: item.previewUri,
-                        uid,
-                        orderId,
-                        index: i,
-                        kind: "preview",
-                    });
-                    console.log(`[OrderService] Preview ${i} uploaded`);
-                });
-            }
-            if (item.printUri && !item.printUrl) {
-                tasks.push(async () => {
-                    item.printUrl = await uploadLocalUriToStorage({
-                        localUri: item.printUri!,
-                        uid,
-                        orderId,
-                        index: i,
-                        kind: "print",
-                    });
-                    console.log(`[OrderService] Print ${i} uploaded`);
-                });
-            }
-        });
-
-        // concurrency=2 (안정성 최우선). 필요하면 3까지 올릴 수 있음.
-        await runWithConcurrency(tasks, 2);
-
-        console.log(`[OrderService] All uploads completed.`);
-    } catch (e) {
-        console.error(`[OrderService] Upload failed. Aborting order creation.`, e);
-        throw new Error("Failed to upload photos. Please try again.");
-    }
-
-    // 4. Create Firestore document with FULL data including URLs
-    const orderData: Omit<OrderDoc, "id"> = {
+    // 3. Create Header document (No file:// URIs)
+    const orderData: Omit<OrderDoc, "id" | "items"> = {
         uid,
         orderCode,
-        itemsCount: updatedItems.length,
+        itemsCount: photos.length,
+        storageBasePath,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         status: "paid",
@@ -146,7 +80,6 @@ export async function createDevOrder(params: {
             phone: shipping.phone,
         },
         shipping,
-        items: updatedItems,
         payment: {
             provider: totals.total === 0 ? "PROMO_FREE" : "DEV_FREE",
             transactionId: `SIM_${orderCode}`,
@@ -155,32 +88,88 @@ export async function createDevOrder(params: {
         },
         paymentMethod: "FREE",
         locale,
+        promoCode: promoCode?.code,
     };
 
     if (promoCode) {
-        orderData.promoCode = promoCode.code;
         (orderData as any).promo = promoCode;
     }
 
     await setDoc(orderRef, orderData);
-    console.log(`[OrderService] Firestore order ${orderId} created successfully.`);
+    console.log(`[OrderService] Header ${orderId} created.`);
 
+    // 4. Upload Assets & Create Subcollection Items
+    for (let i = 0; i < photos.length; i++) {
+        const p = photos[i];
+        const previewUri = p.output?.previewUri || p.uri;
+        const printUri = p.output?.printUri || p.uri;
+
+        const previewPath = buildItemPreviewPath(storageBasePath, i);
+        const printPath = buildItemPrintPath(storageBasePath, i);
+
+        console.log(`[OrderService] Uploading item ${i}...`);
+
+        const [previewRes, printRes] = await Promise.all([
+            uploadFileUriToStorage(previewPath, previewUri),
+            uploadFileUriToStorage(printPath, printUri)
+        ]);
+
+        const itemRef = doc(collection(db, "orders", orderId, "items"));
+        const itemData: any = {
+            index: i,
+            quantity: p.quantity || 1,
+            filterId: p.edits?.filterId || "original",
+            filterParams: p.edits?.committed?.filterParams || p.edits?.filterParams || null,
+            cropPx: p.edits?.committed?.cropPx || null,
+            unitPrice: totals.subtotal / photos.length || 0,
+            lineTotal: (totals.subtotal / photos.length || 0) * (p.quantity || 1),
+            size: "20x20",
+            assets: {
+                previewPath: previewRes.path,
+                previewUrl: previewRes.downloadUrl,
+                printPath: printRes.path,
+                printUrl: printRes.downloadUrl
+            },
+            // Metadata for easy access (no local file:// URIs)
+            previewUrl: previewRes.downloadUrl,
+            printUrl: printRes.downloadUrl,
+        };
+
+        await setDoc(itemRef, {
+            ...itemData,
+            createdAt: serverTimestamp()
+        });
+    }
+
+    console.log(`[OrderService] All items for ${orderId} uploaded and saved.`);
     return orderId;
 }
 
-
 /**
- * Retrieves a single order by ID.
+ * Retrieves a single order by ID, with subcollection fallback.
  */
 export async function getOrder(orderId: string): Promise<OrderDoc | null> {
     const docRef = doc(db, "orders", orderId);
     const snap = await getDoc(docRef);
     if (!snap.exists()) return null;
-    return { id: snap.id, ...snap.data() } as OrderDoc;
+
+    const order = { id: snap.id, ...snap.data() } as OrderDoc;
+
+    // Load subcollection items
+    const itemsSnap = await getDocs(collection(db, "orders", orderId, "items"));
+    if (!itemsSnap.empty) {
+        order.items = itemsSnap.docs
+            .map(d => d.data() as OrderItem)
+            .sort((a, b) => a.index - b.index);
+    }
+
+    return order;
 }
 
 /**
  * Lists all orders for a specific user.
+ * Note: Subcollection items are not loaded here for performance.
+ * They should be fetched via getOrder on clinical detail view.
  */
 export async function listOrders(uid: string): Promise<OrderDoc[]> {
     const q = query(
@@ -197,11 +186,19 @@ export async function listOrders(uid: string): Promise<OrderDoc[]> {
  */
 export function subscribeOrder(orderId: string, onUpdate: (order: OrderDoc | null) => void) {
     const docRef = doc(db, "orders", orderId);
-    return onSnapshot(docRef, (snap) => {
+    return onSnapshot(docRef, async (snap) => {
         if (!snap.exists()) {
             onUpdate(null);
         } else {
-            onUpdate({ id: snap.id, ...snap.data() } as OrderDoc);
+            const order = { id: snap.id, ...snap.data() } as OrderDoc;
+            // Async fetch items for subscription
+            const itemsSnap = await getDocs(collection(db, "orders", orderId, "items"));
+            if (!itemsSnap.empty) {
+                order.items = itemsSnap.docs
+                    .map(d => d.data() as OrderItem)
+                    .sort((a, b) => a.index - b.index);
+            }
+            onUpdate(order);
         }
     });
 }

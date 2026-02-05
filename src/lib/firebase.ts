@@ -1,6 +1,5 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
-import { getAuth } from "firebase/auth";
 import { getStorage } from "firebase/storage";
 
 const firebaseConfig = {
@@ -12,13 +11,34 @@ const firebaseConfig = {
     appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID,
 };
 
-import { initializeAuth } from "firebase/auth";
-const { getReactNativePersistence } = require('firebase/auth');
-import ReactNativeAsyncStorage from '@react-native-async-storage/async-storage';
+import { initializeAuth, getAuth, Auth } from "firebase/auth";
+// @ts-ignore
+import { getReactNativePersistence } from "firebase/auth";
+import { Platform } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
+// --- Singleton Logic ---
 export const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 export const db = getFirestore(app);
-export const auth = initializeAuth(app, {
-    persistence: getReactNativePersistence(ReactNativeAsyncStorage)
-});
 export const storage = getStorage(app);
+
+export const auth = Platform.OS === 'web'
+    ? getAuth(app)
+    : initializeAuth(app, {
+        persistence: getReactNativePersistence(AsyncStorage),
+    });
+
+/**
+ * GOOGLE OAUTH DEV UNBLOCK CHECKLIST:
+ * 1. [ ] Create OAuth 2.0 Client IDs in Google Cloud Console:
+ *    - iOS: com.benjiwon.memotileappanti
+ *    - Web: (for dev)
+ * 2. [ ] Update app.json:
+ *    - ios.bundleIdentifier: "com.benjiwon.memotileappanti"
+ *    - extra.googleIosClientId: (the new ID)
+ *    - extra.googleWebClientId: (the new ID)
+ * 3. [ ] Firebase Console -> Build -> Authentication -> Settings -> Google
+ *    - Add your iOS Bundle ID.
+ *    - Add Web Client ID to the "Web SDK configuration" if not present.
+ * 4. [ ] Ensure your email is added to the OAuth Consent Screen "Test Users".
+ */

@@ -5,6 +5,7 @@ import {
     Image as SkiaImage,
     Skia,
     useImage,
+    useCanvasRef,
 } from "@shopify/react-native-skia";
 import { IDENTITY, type ColorMatrix as M } from "../../utils/colorMatrix";
 
@@ -12,12 +13,17 @@ type Props = {
     uri: string;
     width: number;
     height: number;
-    matrix?: M; // Make optional to match usage
+    matrix?: M;
     style?: ViewStyle;
 };
 
-const FilteredImageSkia = React.memo(({ uri, width, height, matrix, style }: Props) => {
+export interface FilteredImageSkiaRef {
+    snapshot: () => any;
+}
+
+const FilteredImageSkia = React.forwardRef<FilteredImageSkiaRef, Props>(({ uri, width, height, matrix, style }, ref) => {
     const img = useImage(uri);
+    const canvasRef = useCanvasRef();
 
     // Safety: ensure matrix is valid 20-length array
     const safeMatrix = (matrix && matrix.length === 20) ? matrix : IDENTITY;
@@ -28,11 +34,17 @@ const FilteredImageSkia = React.memo(({ uri, width, height, matrix, style }: Pro
         return p;
     }, [safeMatrix]);
 
+    React.useImperativeHandle(ref, () => ({
+        snapshot: () => {
+            return canvasRef.current?.makeImageSnapshot();
+        }
+    }));
+
     if (!img) return null;
 
     return (
         <View style={[{ width, height }, style]} pointerEvents="none">
-            <Canvas style={{ flex: 1 }}>
+            <Canvas ref={canvasRef} style={{ flex: 1 }}>
                 <SkiaImage
                     image={img}
                     x={0}

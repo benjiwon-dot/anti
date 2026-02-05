@@ -1,6 +1,7 @@
 // app/_layout.tsx
 import "react-native-gesture-handler"; // ✅ 최상단에 두는 게 안정적
-
+import { Buffer } from "buffer";
+(global as any).Buffer = Buffer;
 import React, { useState, useEffect } from "react";
 import { Stack } from "expo-router";
 import { View } from "react-native";

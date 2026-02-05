@@ -8,8 +8,8 @@ import { useLanguage } from "../context/LanguageContext";
 import { colors } from "../theme/colors";
 import { shadows } from "../theme/shadows";
 
-// Firebase / Auth / Orders / Storage
 import { auth } from "../lib/firebase";
+import { signOut, User } from "firebase/auth";
 import { createDevOrder, getOrder } from "../services/orders";
 import { validatePromo, PromoResult } from "../services/promo";
 import PromptPayModal from "../components/payments/PromptPayModal";
@@ -25,7 +25,7 @@ const PAYMENT_OPTIONS = [
 
 export default function CheckoutStepTwoScreen() {
     const router = useRouter();
-    const { photos } = usePhoto();
+    const { photos, clearDraft, clearPhotos } = usePhoto();
     const { t, locale } = useLanguage();
 
     const [formData, setFormData] = useState({
@@ -39,6 +39,15 @@ export default function CheckoutStepTwoScreen() {
         email: '',
         instagram: '',
     });
+    const [currentUser, setCurrentUser] = React.useState<User | null>(auth.currentUser);
+
+    React.useEffect(() => {
+        const unsub = auth.onAuthStateChanged(user => {
+            setCurrentUser(user);
+        });
+        return unsub;
+    }, []);
+
     const handleInputChange = (field: string, value: string) => {
         setFormData(prev => ({ ...prev, [field]: value }));
     };
@@ -128,6 +137,11 @@ export default function CheckoutStepTwoScreen() {
             });
 
             console.log("Order created successfully:", orderId);
+
+            // Post-order cleanup
+            await clearDraft();
+            clearPhotos();
+
             router.replace({ pathname: "/myorder/success", params: { id: orderId } });
 
         } catch (e) {
@@ -267,14 +281,43 @@ export default function CheckoutStepTwoScreen() {
                         </View>
                     </View>
 
+                    {/* Auth Block */}
+                    <View style={styles.authBlockContainer}>
+                        {currentUser ? (
+                            <View style={styles.loggedInBox}>
+                                <Text style={styles.loggedInText}>
+                                    {t['loggedInAs'] || "Logged in as"} {currentUser.email}
+                                </Text>
+                                <TouchableOpacity onPress={() => signOut(auth)}>
+                                    <Text style={styles.signOutLink}>
+                                        {t['signOut'] || "Sign Out"}
+                                    </Text>
+                                </TouchableOpacity>
+                            </View>
+                        ) : (
+                            <View style={styles.loggedOutBox}>
+                                <Text style={styles.loggedOutText}>
+                                    {t['signInToContinue'] || "Please sign in to continue."}
+                                </Text>
+                                <TouchableOpacity
+                                    style={styles.signInBtn}
+                                    onPress={() => router.push("/auth/email")}
+                                >
+                                    <Text style={styles.signInBtnText}>{t['signIn'] || "Sign In"}</Text>
+                                </TouchableOpacity>
+                            </View>
+                        )}
+                    </View>
+
                     {/* Payment Selection Area */}
                     <View style={styles.paymentSection}>
                         <Text style={styles.sectionTitle}>{t['paymentMethodLabel'] || "Payment Method"}</Text>
 
                         {/* PromptPay */}
                         <TouchableOpacity
-                            style={[styles.paymentItem, { borderColor: '#003a70' }]}
+                            style={[styles.paymentItem, { borderColor: '#003a70' }, !currentUser && { opacity: 0.5 }]}
                             onPress={() => handlePlaceOrder('PROMPT_PAY')}
+                            disabled={!currentUser}
                         >
                             <View style={styles.paymentItemLeft}>
                                 <Image source={require('../assets/promptpay_logo.png')} style={styles.paymentLogo} resizeMode="contain" />
@@ -285,8 +328,9 @@ export default function CheckoutStepTwoScreen() {
 
                         {/* TrueMoney */}
                         <TouchableOpacity
-                            style={[styles.paymentItem, { borderColor: '#FF6F00' }]}
+                            style={[styles.paymentItem, { borderColor: '#FF6F00' }, !currentUser && { opacity: 0.5 }]}
                             onPress={() => handlePlaceOrder('TRUEMONEY')}
+                            disabled={!currentUser}
                         >
                             <View style={styles.paymentItemLeft}>
                                 <Image source={require('../assets/truemoney_logo.png')} style={styles.paymentLogo} resizeMode="contain" />
@@ -339,9 +383,9 @@ export default function CheckoutStepTwoScreen() {
 
                         {/* Dev Free (Hidden or conditional) */}
                         <TouchableOpacity
-                            style={[styles.paymentItem, { borderColor: '#000', marginTop: 20, borderStyle: 'dashed' }]}
+                            style={[styles.paymentItem, { borderColor: '#000', marginTop: 20, borderStyle: 'dashed' }, !currentUser && { opacity: 0.5 }]}
                             onPress={() => handlePlaceOrder('DEV_FREE')}
-                            disabled={isCreatingOrder}
+                            disabled={isCreatingOrder || !currentUser}
                         >
                             <View style={styles.paymentItemLeft}>
                                 <View style={[styles.paymentIconBase, { backgroundColor: '#F3F4F6' }]}>
@@ -436,4 +480,14 @@ const styles = StyleSheet.create({
     },
     paymentBtn: { width: '100%', height: 56, borderRadius: 28, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 12, shadowColor: "#000", shadowOpacity: 0.1, shadowOffset: { width: 0, height: 4 }, shadowRadius: 10 },
     paymentBtnText: { color: '#fff', fontWeight: '700', fontSize: 16 },
+
+    // Auth Block Styles
+    authBlockContainer: { marginBottom: 32 },
+    loggedInBox: { backgroundColor: '#D9ECFF', padding: 16, borderRadius: 14, alignItems: 'center' },
+    loggedInText: { fontSize: 15, fontWeight: '600', color: '#003a70' },
+    signOutLink: { marginTop: 8, textDecorationLine: 'underline', color: '#666', opacity: 0.8 },
+    loggedOutBox: { backgroundColor: '#FFF3CD', padding: 16, borderRadius: 14, alignItems: 'center' },
+    loggedOutText: { fontSize: 14, color: '#856404', opacity: 0.8, marginBottom: 12 },
+    signInBtn: { backgroundColor: '#111', paddingHorizontal: 24, paddingVertical: 10, borderRadius: 12 },
+    signInBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
 });

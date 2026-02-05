@@ -20,8 +20,14 @@ export default function TopBarRN({ current, total, onBack, onNext }: TopBarProps
     return (
         <BlurView intensity={80} tint="light" style={[styles.container, { paddingTop: insets.top }]}>
             <View style={styles.headerContent}>
-                <Pressable onPress={onBack} style={styles.navBtn}>
-                    <Feather name="arrow-left" size={24} color={colors.ink} />
+                <Pressable
+                    onPress={onBack}
+                    style={styles.navBtn}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                    <View pointerEvents="none">
+                        <Feather name="arrow-left" size={24} color={colors.ink} />
+                    </View>
                 </Pressable>
 
                 <Text style={styles.title}>

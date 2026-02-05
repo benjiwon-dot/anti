@@ -1,5 +1,5 @@
 // src/screens/EditorScreen.tsx
-import React, { useEffect, useMemo, useRef, useState, forwardRef } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   StyleSheet,
@@ -8,12 +8,11 @@ import {
   ActivityIndicator,
   Alert,
   Image as RNImage,
-  Dimensions,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
-import * as FileSystem from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy";
 
 import { usePhoto } from "../context/PhotoContext";
 import { useLanguage } from "../context/LanguageContext";
@@ -23,12 +22,13 @@ import { colors } from "../theme/colors";
 import TopBarRN from "../components/editorRN/TopBarRN";
 import CropFrameRN from "../components/editorRN/CropFrameRN";
 import FilterStripRN from "../components/editorRN/FilterStripRN";
+import FilteredImageSkia, { FilteredImageSkiaRef } from "../components/editorRN/FilteredImageSkia";
 import { FILTERS } from "../components/editorRN/filters";
 import { IDENTITY } from "../utils/colorMatrix";
 
 // Import Utils
-import { calculateCropRectPixels } from "../utils/cropMath";
-import { generatePreviewExport, generatePrintExport } from "../utils/editorLogic";
+import { calculatePrecisionCrop } from "../utils/cropMath";
+import { generatePreviewExport, generatePrintExport, bakeFilterFromCanvasSnapshot, withTimeout } from "../utils/editorLogic";
 import { exportQueue } from "../utils/exportQueue";
 
 type EditState = {
@@ -58,14 +58,20 @@ export default function EditorScreen() {
   const { photos, currentIndex, setCurrentIndex, saveDraft, updatePhoto } = usePhoto();
   const { t } = useLanguage();
 
-  // Cache for resolved URIs
   const resolvedCache = useRef<Record<string, ResolvedInfo>>({});
-
   const currentPhoto = photos?.[currentIndex] as any;
 
   const [resolved, setResolved] = useState<ResolvedInfo | null>(null);
+  const [currentUi, setCurrentUi] = useState<EditState>(makeDefaultEdit());
+  const [viewportDim, setViewportDim] = useState<{ width: number; height: number } | null>(null);
+  const [exportBakeInfo, setExportBakeInfo] = useState<{ uri: string; w: number; h: number } | null>(null);
 
-  // Instant gating info based on PhotoContext (might be original or cached preview)
+  const isExporting = useRef(false);
+  const cropRef = useRef<any>(null);
+  const filteredCanvasRef = useRef<FilteredImageSkiaRef>(null);
+  const isTransitioningRef = useRef(false);
+  const isSavingRef = useRef(false);
+
   const initialInfo = useMemo<ResolvedInfo | null>(() => {
     if (!currentPhoto) return null;
     return {
@@ -75,33 +81,13 @@ export default function EditorScreen() {
     };
   }, [currentPhoto?.uri, (currentPhoto as any)?.cachedPreviewUri]);
 
-  // Local UI state (Gestures)
-  const [currentUi, setCurrentUi] = useState<EditState>(makeDefaultEdit());
-  const isExporting = useRef(false);
-  const cropRef = useRef<any>(null);
-  const isTransitioningRef = useRef(false);
-  const isSavingRef = useRef(false);
-
-  // Sync state when index changes (Single Source of Truth) - Sync During Render to avoid flicker
-  const [prevIndex, setPrevIndex] = useState(currentIndex);
-  if (currentIndex !== prevIndex) {
-    setPrevIndex(currentIndex);
-    // Do NOT call setResolved(null) or setCurrentUi here immediately
-    // Instead, we let the resolution useEffect handle the atomic swap.
-  }
-
-  // Remove the old useEffect-based sync
-
-  // URI Resolution (keep your flow, but ALSO store size)
   useEffect(() => {
     let alive = true;
     const uri = currentPhoto?.uri;
-
     if (!uri) {
       setResolved(null);
       return;
     }
-
     if (resolvedCache.current[uri]) {
       setResolved(resolvedCache.current[uri]);
       return;
@@ -110,53 +96,30 @@ export default function EditorScreen() {
     const resolve = async () => {
       try {
         let inputUri = uri;
-
-        // content:// => copy to file for manipulator
         if (uri.startsWith("content://")) {
-          // @ts-ignore
           const base = (FileSystem as any).cacheDirectory ?? (FileSystem as any).documentDirectory;
           const dest = `${base}editor_import_${Date.now()}.jpg`;
           await FileSystem.copyAsync({ from: uri, to: dest });
           inputUri = dest;
         }
 
-        // Resize for fast preview UI
-        const result = await manipulateAsync(
-          inputUri,
-          [{ resize: { width: 1000 } }],
-          { compress: 0.9, format: SaveFormat.JPEG }
-        );
-
-        // ✅ store resolved uri + true size
-        const info: ResolvedInfo = {
-          uri: result.uri,
-          width: result.width ?? 1000,
-          height: result.height ?? 1000,
-        };
+        const result = await manipulateAsync(inputUri, [{ resize: { width: 1000 } }], { compress: 0.9, format: SaveFormat.JPEG });
+        const info: ResolvedInfo = { uri: result.uri, width: result.width ?? 1000, height: result.height ?? 1000 };
 
         if (alive) {
           resolvedCache.current[uri] = info;
-
-          // ✅ Atomic Swap: Update visual frame and UI state only when ready
           const p = photos?.[currentIndex] as any;
-          if (p?.edits && p.edits.ui) {
-            setCurrentUi(p.edits.ui);
-          } else {
-            setCurrentUi(makeDefaultEdit());
-          }
+          setCurrentUi(p?.edits?.ui ? p.edits.ui : makeDefaultEdit());
           setResolved(info);
         }
       } catch (e) {
         console.warn("Resolution failed", e);
-
-        // fallback: try to get size from original uri
         try {
           const s = await getImageSizeAsync(uri);
           const info: ResolvedInfo = { uri, width: s.width, height: s.height };
           if (alive) {
             const p = photos?.[currentIndex] as any;
-            if (p?.edits && p.edits.ui) setCurrentUi(p.edits.ui);
-            else setCurrentUi(makeDefaultEdit());
+            setCurrentUi(p?.edits?.ui ? p.edits.ui : makeDefaultEdit());
             setResolved(info);
           }
         } catch {
@@ -164,230 +127,221 @@ export default function EditorScreen() {
         }
       }
     };
-
     resolve();
-    return () => {
-      alive = false;
-    };
+    return () => { alive = false; };
   }, [currentPhoto?.uri]);
 
-  // ✅ activeResolved: prioritizes background-resized 1000px preview (resolved)
-  // falls back to initialInfo (uncached preview or original)
   const activeResolved = resolved || initialInfo;
   const displayUri = activeResolved?.uri || currentPhoto?.uri;
 
-  // Filter Logic
   const activeFilterId = currentUi.filterId;
-  const activeFilterObj = useMemo(
-    () => FILTERS.find((f) => f.id === activeFilterId) || FILTERS[0],
-    [activeFilterId]
-  );
+  const activeFilterObj = useMemo(() => FILTERS.find((f) => f.id === activeFilterId) || FILTERS[0], [activeFilterId]);
   const activeMatrix = useMemo(() => activeFilterObj.matrix ?? IDENTITY, [activeFilterObj]);
 
-  // Draft Autosave
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(() => {
-      saveDraft("editor").catch(() => { });
-    }, 500);
-    return () => {
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    };
+    saveTimerRef.current = setTimeout(() => { saveDraft("editor").catch(() => { }); }, 500);
+    return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
   }, [currentUi, currentIndex, saveDraft]);
 
   const handleBack = () => {
-    if (currentIndex > 0) {
-      setCurrentIndex(currentIndex - 1);
-    } else {
-      router.replace("/create/select");
-    }
+    if (currentIndex > 0) setCurrentIndex(currentIndex - 1);
+    else router.replace("/create/select");
   };
 
   const handleNext = async () => {
-    if (!photos || photos.length === 0) return;
-    if (isExporting.current) return;
+    if (!photos || photos.length === 0 || isExporting.current) return;
+
+    // 1. Freeze EVERYTHING immediately (Deterministic)
+    const idx = currentIndex;
+    const photo = { ...photos[idx] } as any;
+    const vp = viewportDim;
+    const cropState = cropRef.current?.getLatestCrop();
+    const frameRect = cropRef.current?.getFrameRect();
+    const filterUi = { ...currentUi };
+    const matrix = activeMatrix;
+    const resolvedInfo = resolved;
+    const activeFilter = activeFilterObj;
+
+    if (__DEV__) {
+      console.log("[Next] Frozen State:", {
+        idx,
+        photoUri: photo.uri,
+        vp,
+        frameRect,
+        cropState,
+        filterId: filterUi.filterId
+      });
+    }
+
+    if (!vp || !cropState || !frameRect || !activeResolved) {
+      Alert.alert("Editor not ready", "Please wait for image to load.");
+      return;
+    }
 
     try {
       isExporting.current = true;
-      isTransitioningRef.current = true; // Lock UI re-sync
+      isTransitioningRef.current = true;
+      isSavingRef.current = true;
 
-      const p = photos[currentIndex] as any;
-      const originalUri = p.uri;
-      const uiUri = displayUri;
-      const uiW = resolved?.width ?? p.width;
-      const uiH = resolved?.height ?? p.height;
+      const uiUri = resolvedInfo?.uri || photo.uri;
+      const uiW = resolvedInfo?.width ?? photo.width;
+      const uiH = resolvedInfo?.height ?? photo.height;
 
-      // 1. Get latest sync transform
-      const latestCrop = cropRef.current?.getLatestCrop() || currentUi.crop;
-
-      const SCREEN_WIDTH = Dimensions.get("window").width;
-      const PREVIEW_SIZE = SCREEN_WIDTH;
-      const CROP_SIZE = SCREEN_WIDTH * 0.75;
-
-      const baseScale = Math.max(PREVIEW_SIZE / uiW, PREVIEW_SIZE / uiH);
-      const renderedW = uiW * baseScale;
-      const renderedH = uiH * baseScale;
-      const renderedX = (PREVIEW_SIZE - renderedW) / 2;
-      const renderedY = (PREVIEW_SIZE - renderedH) / 2;
-
-      const cropRes = calculateCropRectPixels({
-        imageSize: { width: uiW, height: uiH },
-        renderedRect: { x: renderedX, y: renderedY, width: renderedW, height: renderedH },
-        frameRect: {
-          x: (PREVIEW_SIZE - CROP_SIZE) / 2,
-          y: (PREVIEW_SIZE - CROP_SIZE) / 2,
-          width: CROP_SIZE,
-          height: CROP_SIZE,
-        },
-        transform: {
-          scale: latestCrop.scale,
-          translateX: latestCrop.x,
-          translateY: latestCrop.y,
-        },
+      // 2. Precision Crop using frozen vp
+      const cropRes = calculatePrecisionCrop({
+        sourceSize: { width: uiW, height: uiH },
+        containerSize: { width: vp.width, height: vp.height },
+        frameRect,
+        transform: { scale: cropState.scale, translateX: cropState.x, translateY: cropState.y }
       });
 
-      if (!cropRes.isValid) {
-        Alert.alert(
-          t.cropInvalidTitle || "Crop not valid",
-          t.cropInvalidBody || "Please adjust crop to cover the frame fully."
-        );
-        isTransitioningRef.current = false;
-        return;
+      if (!cropRes.isValid) throw new Error("[Editor] Invalid crop result");
+
+      // 3. Export Preview (Crop only)
+      const previewRes = await generatePreviewExport(uiUri, cropRes);
+      let finalPreviewUri = previewRes.uri;
+      let finalPrintUri = ""; // Will be populated by queue or snapshot
+
+      // 4. Bake Filter via Snapshot (Wait 2 frames)
+      if (filterUi.filterId !== "original") {
+        setExportBakeInfo({ uri: finalPreviewUri, w: previewRes.width, h: previewRes.height });
+        // Wait 2 frames for rendering stability
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+        try {
+          const snapshot = filteredCanvasRef.current?.snapshot();
+          if (snapshot) {
+            const bakedUri = await bakeFilterFromCanvasSnapshot(snapshot);
+            finalPreviewUri = bakedUri;
+            finalPrintUri = bakedUri; // Instruction: bakedUriPrint must be assigned to printUri
+            if (__DEV__) console.log("[Filter] Baked URI used for preview and print");
+          } else {
+            console.warn("[Filter] Snapshot unavailable after wait");
+          }
+        } catch (bakeErr) {
+          console.error("[Filter] Snapshot baking failed:", bakeErr);
+        }
+        setExportBakeInfo(null);
       }
 
-      // 2. Export preview WITH filter
-      const matrixToApply = activeMatrix;
-      const previewExp = await generatePreviewExport(uiUri, cropRes, matrixToApply);
-
-      // 3. Persist ALL states
-      isSavingRef.current = true;
-      await updatePhoto(currentIndex, {
+      // 5. Update Photo Context
+      const filterParams = { matrix, overlayColor: activeFilter.overlayColor, overlayOpacity: activeFilter.overlayOpacity };
+      await updatePhoto(idx, {
         edits: {
-          crop: cropRes, // for legacy compatibility
-          filterId: currentUi.filterId,
-          rotate: 0,
-          ui: {
-            ...currentUi,
-            crop: latestCrop,
-          },
-          committed: {
-            cropPx: cropRes as any,
-            filterId: currentUi.filterId,
-          }
+          crop: cropRes,
+          filterId: filterUi.filterId,
+          filterParams,
+          ui: { ...filterUi, crop: cropState },
+          committed: { cropPx: cropRes as any, filterId: filterUi.filterId, filterParams }
         } as any,
         output: {
-          ...(photos[currentIndex] as any).output,
-          previewUri: previewExp.uri,
-          printUri: "", // placeholder
-          quantity: (photos[currentIndex] as any).output?.quantity || 1,
-        },
+          ...(photo.output || {}),
+          previewUri: finalPreviewUri,
+          printUri: finalPrintUri,
+          quantity: photo.output?.quantity || 1
+        }
       });
-      isSavingRef.current = false;
 
-      // 4. Async Print Export (High-res)
-      exportQueue.enqueue(
-        async () => {
-          let origW = p.width;
-          let origH = p.height;
-          if (!origW || !origH) {
-            const s = await getImageSizeAsync(originalUri);
-            origW = s.width;
-            origH = s.height;
-          }
+      // 6. High-res Print Export (Queue) - Only if NOT filtered (already high-enough or need real high-res)
+      // If filtered, we already set finalPrintUri above. If original, we need to crop from original high-res.
+      if (filterUi.filterId === "original") {
+        exportQueue.enqueue(async () => {
+          try {
+            let origW = photo.width, origH = photo.height;
+            if (!origW || !origH) {
+              const s = await manipulateAsync(photo.uri, [], {});
+              origW = s.width; origH = s.height;
+            }
+            const sx = origW / uiW;
+            const sy = origH / uiH;
+            const origCrop = {
+              x: Math.round(cropRes.x * sx),
+              y: Math.round(cropRes.y * sy),
+              width: Math.round(cropRes.width * sx),
+              height: Math.round(cropRes.height * sy)
+            };
+            const printRes = await generatePrintExport(photo.uri, origCrop, { srcW: origW, srcH: origH, viewW: uiW, viewH: uiH, viewCrop: cropRes });
+            await updatePhoto(idx, { output: { ...(photos[idx] as any).output, printUri: printRes.uri } });
+          } catch (err) { console.error(`[ExportQueue] High-res failed for ${idx}:`, err); }
+        }, `Print-${idx}`);
+      }
 
-          const sx = origW / uiW;
-          const sy = origH / uiH;
-
-          const c: any = cropRes;
-          const origCrop: any = {
-            ...c,
-            originX: Math.round(c.originX * sx),
-            originY: Math.round(c.originY * sy),
-            width: Math.round(c.width * sx),
-            height: Math.round(c.height * sy),
-          };
-
-          // Apply filter to high-res print as well
-          const printExp = await generatePrintExport(originalUri, origCrop, matrixToApply);
-
-          await updatePhoto(currentIndex, {
-            output: {
-              ...(photos[currentIndex] as any).output,
-              printUri: printExp.uri,
-              previewUri: previewExp.uri,
-            },
-          });
-        },
-        `Print-${currentIndex}`
-      );
-
-      // 5. Navigate
-      if (currentIndex < photos.length - 1) {
-        setCurrentIndex(currentIndex + 1);
-        // isTransitioningRef will be reset by the effect or after next tick
-        setTimeout(() => {
-          isTransitioningRef.current = false;
-        }, 50);
+      // 7. Navigation
+      if (idx < photos.length - 1) {
+        requestAnimationFrame(() => {
+          setCurrentIndex(idx + 1);
+          setTimeout(() => { isTransitioningRef.current = false; }, 50);
+        });
       } else {
         router.push("/create/checkout");
       }
     } catch (e) {
-      console.error("HandleNext Error", e);
+      console.error("[Next] HandleNext Error:", e);
       Alert.alert(t.failedTitle || "Error", t.failedBody || "Failed to process photo.");
       isTransitioningRef.current = false;
     } finally {
+      isSavingRef.current = false;
       isExporting.current = false;
     }
   };
 
   if (!currentPhoto) return <View style={styles.loading}><ActivityIndicator /></View>;
 
-  // ✅ Editor Gating: Only render editor when image is resolved AND UI state is synced
-  const isReady = !!resolved && !!currentUi;
-
   return (
     <View style={styles.container}>
       <View style={{ paddingTop: insets.top }}>
-        <TopBarRN
-          current={currentIndex + 1}
-          total={photos.length}
-          onBack={handleBack}
-          onNext={handleNext}
-        />
+        <TopBarRN current={currentIndex + 1} total={photos.length} onBack={handleBack} onNext={handleNext} />
       </View>
 
-      <View style={styles.editorArea}>
-        {activeResolved ? (
+      <View
+        style={styles.editorArea}
+        onLayout={(e) => {
+          const { width, height } = e.nativeEvent.layout;
+          if (width > 0 && height > 0) setViewportDim({ width, height });
+        }}
+      >
+        {activeResolved && viewportDim ? (
           <CropFrameRN
+            key={`crop-${currentIndex}`}
             ref={cropRef}
             imageSrc={activeResolved.uri}
             imageWidth={activeResolved.width}
             imageHeight={activeResolved.height}
+            containerWidth={viewportDim.width}
+            containerHeight={viewportDim.height}
             crop={currentUi.crop}
             onChange={(newCrop: any) => setCurrentUi((prev) => ({ ...prev, crop: newCrop }))}
             matrix={activeMatrix}
+            photoIndex={currentIndex}
           />
         ) : (
           <View pointerEvents="none" style={StyleSheet.absoluteFill}>
             <ActivityIndicator size="large" color={colors.ink} />
           </View>
         )}
+
+        {/* Hidden Snapshot Component (Mounted for Export Baking) */}
+        {exportBakeInfo && (
+          <View style={{ position: "absolute", opacity: 0, width: exportBakeInfo.w, height: exportBakeInfo.h }} pointerEvents="none">
+            <FilteredImageSkia
+              ref={filteredCanvasRef}
+              uri={exportBakeInfo.uri}
+              width={exportBakeInfo.w}
+              height={exportBakeInfo.h}
+              matrix={activeMatrix}
+            />
+          </View>
+        )}
       </View>
 
       <View style={[styles.bottomBar, { paddingBottom: Math.max(20, insets.bottom) }]}>
-        <FilterStripRN
-          currentFilter={activeFilterObj}
-          imageSrc={displayUri}
-          onSelect={(f) => setCurrentUi((prev) => ({ ...prev, filterId: f.id }))}
-        />
-
+        <FilterStripRN currentFilter={activeFilterObj} imageSrc={displayUri} onSelect={(f) => setCurrentUi((prev) => ({ ...prev, filterId: f.id }))} />
         <View style={styles.primaryBtnContainer}>
-          <Pressable style={styles.primaryBtn} onPress={handleNext}>
+          <Pressable style={[styles.primaryBtn, (!viewportDim || !resolved) && { opacity: 0.5 }]} onPress={handleNext} disabled={!viewportDim || !resolved || isExporting.current}>
             <Text style={styles.primaryBtnText}>
-              {currentIndex === photos.length - 1
-                ? (t.saveCheckout || "Save & Checkout")
-                : (t.nextPhoto || "Next Photo")}
+              {currentIndex === photos.length - 1 ? (t.saveCheckout || "Save & Checkout") : (t.nextPhoto || "Next Photo")}
             </Text>
           </Pressable>
         </View>
@@ -402,19 +356,6 @@ const styles = StyleSheet.create({
   editorArea: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#F7F7F8" },
   bottomBar: { backgroundColor: "#F7F7F8", borderTopWidth: 1, borderTopColor: "rgba(0,0,0,0.05)" },
   primaryBtnContainer: { padding: 16, alignItems: "center" },
-  primaryBtn: {
-    width: "100%",
-    maxWidth: 340,
-    height: 52,
-    backgroundColor: colors.ink,
-    borderRadius: 26,
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: "#000",
-    shadowOpacity: 0.12,
-    shadowOffset: { width: 0, height: 8 },
-    shadowRadius: 20,
-    elevation: 6,
-  },
+  primaryBtn: { width: "100%", maxWidth: 340, height: 52, backgroundColor: colors.ink, borderRadius: 26, alignItems: "center", justifyContent: "center", elevation: 6 },
   primaryBtnText: { color: "#fff", fontSize: 16, fontWeight: "600" },
 });

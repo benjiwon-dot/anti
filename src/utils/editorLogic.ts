@@ -1,122 +1,103 @@
-import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
-import * as FileSystem from 'expo-file-system/legacy';
-import { Skia } from "@shopify/react-native-skia";
-import { IDENTITY, type ColorMatrix } from './colorMatrix';
+import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
+import * as FileSystem from "expo-file-system/legacy";
+import { Skia, ImageFormat } from "@shopify/react-native-skia";
+import { Buffer } from "buffer";
+import { IDENTITY, type ColorMatrix } from "./colorMatrix";
 
 /**
- * Applies a color matrix filter to a URI using offscreen Skia.
- * Returns a new local URI.
+ * Helper: timeout wrapper to prevent infinite hangs.
  */
-export const applyFilterToUri = async (uri: string, matrix: ColorMatrix) => {
-    if (!matrix || JSON.stringify(matrix) === JSON.stringify(IDENTITY)) {
-        return uri;
-    }
+export function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+    return Promise.race([
+        p,
+        new Promise<T>((_, reject) =>
+            setTimeout(() => reject(new Error(`Timeout: ${label} exceeded ${ms}ms`)), ms)
+        ),
+    ]);
+}
 
-    // 1. Load image data
-    const base64 = await FileSystem.readAsStringAsync(uri, {
-        encoding: (FileSystem as any).EncodingType?.Base64 || 'base64',
-    });
-    const data = Skia.Data.fromBase64(base64);
-    const image = Skia.Image.MakeImageFromEncoded(data);
-    if (!image) return uri;
-
-    const width = image.width();
-    const height = image.height();
-
-    // 2. Offscreen render
-    // Use Skia.MakeSurface if it exists, otherwise Skia.Surface.MakeRasterN32Premul
-    const surface = (Skia as any).MakeSurface?.(width, height) ||
-        (Skia.Surface as any).MakeRasterN32Premul?.(width, height);
-    if (!surface) return uri;
-
-    const canvas = surface.getCanvas();
-    const paint = Skia.Paint();
-    paint.setColorFilter(Skia.ColorFilter.MakeMatrix(matrix));
-
-    canvas.drawImage(image, 0, 0, paint);
-
-    // 3. Save
-    const snapshot = surface.makeImageSnapshot();
-    // 3 = JPEG, 4 = PNG in Skia
-    const encoded = snapshot.encodeToData(3, 90);
-    if (!encoded) return uri;
-
-    const dest = `${(FileSystem as any).cacheDirectory || ''}filtered_${Date.now()}.jpg`;
-    await FileSystem.writeAsStringAsync(dest, encoded.toBase64(), {
-        encoding: (FileSystem as any).EncodingType?.Base64 || 'base64',
-    });
-
-    return dest;
+/**
+ * Utility: returns the original URI.
+ * Real baking now happens via Canvas snapshot in EditorScreen.
+ */
+export const applyFilterToUri = async (uri: string, matrix: ColorMatrix): Promise<string> => {
+    return uri;
 };
 
 /**
- * Generates a fast preview export (max 1200px).
+ * Bakes a Skia image snapshot (from an on-screen Canvas) to a local file.
+ * Stable on both iOS and Android.
+ */
+export const bakeFilterFromCanvasSnapshot = async (
+    snapshot: any
+): Promise<string> => {
+    if (!snapshot) throw new Error("[Filter] No snapshot provided to bake.");
+
+    try {
+        const data = snapshot.encodeToBytes(ImageFormat.JPEG, 90);
+        const dest = `${FileSystem.cacheDirectory}baked_${Date.now()}.jpg`;
+
+        await FileSystem.writeAsStringAsync(
+            dest,
+            Buffer.from(data).toString("base64"),
+            { encoding: FileSystem.EncodingType.Base64 }
+        );
+
+        if (__DEV__) console.log(`[Filter] Snapshot bake success: ${dest.slice(-20)}`);
+        return dest;
+    } catch (e) {
+        console.error("[Filter] Snapshot bake failed:", e);
+        throw e;
+    }
+};
+
+/**
+ * Generates a fast preview export (max 1000px).
  */
 export const generatePreviewExport = async (
     uri: string,
-    cropRect: { x: number; y: number; width: number; height: number },
-    matrix?: ColorMatrix
+    cropRect: { x: number; y: number; width: number; height: number }
 ) => {
-    const cropAction = {
-        crop: {
-            originX: cropRect.x,
-            originY: cropRect.y,
-            width: cropRect.width,
-            height: cropRect.height,
-        }
-    };
-
-    // Resize for preview
-    const resizeAction = { resize: { width: Math.min(cropRect.width, 1200) } };
-
     const result = await manipulateAsync(
         uri,
-        [cropAction, resizeAction],
+        [
+            { crop: { originX: cropRect.x, originY: cropRect.y, width: cropRect.width, height: cropRect.height } },
+            { resize: { width: Math.min(cropRect.width, 1000) } }
+        ],
         { compress: 0.8, format: SaveFormat.JPEG }
     );
 
-    let finalUri = result.uri;
-    if (matrix) {
-        finalUri = await applyFilterToUri(finalUri, matrix);
-    }
-
-    return { uri: finalUri, width: result.width, height: result.height };
+    return { uri: result.uri, width: result.width, height: result.height };
 };
 
 /**
- * Generates a high-quality print export (max 5000px).
+ * Generates a high-quality print export.
  */
 export const generatePrintExport = async (
     uri: string,
     cropRect: { x: number; y: number; width: number; height: number },
-    matrix?: ColorMatrix
+    meta?: { srcW: number; srcH: number; viewW: number; viewH: number; viewCrop: any }
 ) => {
-    const cropAction = {
-        crop: {
-            originX: cropRect.x,
-            originY: cropRect.y,
-            width: cropRect.width,
-            height: cropRect.height,
-        }
-    };
+    const srcW = meta?.srcW || 0;
+    const srcH = meta?.srcH || 0;
 
-    // Resize only if larger than 5000px
-    const actions: any[] = [cropAction];
-    // We strictly avoid upscaling.
-    if (cropRect.width > 5000 || cropRect.height > 5000) {
-        actions.push({ resize: { width: 5000 } }); // maintains aspect ratio
-    }
+    // Safety Clamp
+    const safeX = Math.max(0, Math.min(cropRect.x, srcW - 1));
+    const safeY = Math.max(0, Math.min(cropRect.y, srcH - 1));
+    const safeW = Math.max(1, Math.min(cropRect.width, srcW - safeX));
+    const safeH = Math.max(1, Math.min(cropRect.height, srcH - safeY));
+
+    const longest = Math.max(safeW, safeH);
+    const targetW = longest > 4000 ? (safeW * 4000 / longest) : safeW;
 
     const result = await manipulateAsync(
         uri,
-        actions,
-        { compress: 0.95, format: SaveFormat.JPEG }
+        [
+            { crop: { originX: safeX, originY: safeY, width: safeW, height: safeH } },
+            { resize: { width: targetW } }
+        ],
+        { compress: 0.9, format: SaveFormat.JPEG }
     );
 
-    let finalUri = result.uri;
-    if (matrix) {
-        finalUri = await applyFilterToUri(finalUri, matrix);
-    }
-
-    return { uri: finalUri, width: result.width, height: result.height };
+    return { uri: result.uri, width: result.width, height: result.height };
 };

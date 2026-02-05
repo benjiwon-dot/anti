@@ -4,124 +4,132 @@ import { useRouter } from 'expo-router';
 import { ChevronLeft } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { useLanguage } from '../src/context/LanguageContext';
 import { colors } from '../src/theme/colors';
 
 export default function TermsOfService() {
     const router = useRouter();
+    const { t } = useLanguage();
     const insets = useSafeAreaInsets();
 
     const handleEmailPress = () => {
-        Linking.openURL('mailto:support@memotiles.com');
+        Linking.openURL(`mailto:${t.supportEmail}`);
     };
 
     return (
         <View style={[styles.container, { paddingTop: insets.top }]}>
             <View style={styles.header}>
-                <Pressable onPress={() => router.back()} style={styles.backBtn}>
-                    <ChevronLeft size={24} color="#111" />
+                <Pressable
+                    onPress={() => router.back()}
+                    style={styles.backBtn}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                    <View pointerEvents="none">
+                        <ChevronLeft size={24} color="#111" />
+                    </View>
                 </Pressable>
-                <Text style={styles.title}>Terms of Service</Text>
+                <Text style={styles.title}>{t.terms_title}</Text>
                 <View style={{ width: 24 }} />
             </View>
 
             <ScrollView contentContainerStyle={styles.content}>
-                <Text style={styles.pageTitle}>Terms of Service</Text>
+                <Text style={styles.pageTitle}>{t.terms_title}</Text>
 
                 <View style={styles.section}>
-                    <Text style={styles.sectionHeading}>1. Service Description</Text>
+                    <Text style={styles.sectionHeading}>{t.terms_sec1_title}</Text>
                     <Text style={styles.paragraph}>
-                        MEMOTILES provides a service for uploading and editing photos to create and deliver custom-made photo tiles. All products are produced on a made-to-order basis.
+                        {t.terms_sec1_text}
                     </Text>
                 </View>
 
                 <View style={styles.section}>
-                    <Text style={styles.sectionHeading}>2. User Responsibility & Purchase Authority</Text>
+                    <Text style={styles.sectionHeading}>{t.terms_sec2_title}</Text>
                     <Text style={styles.paragraph}>
-                        Users confirm they have the legal authority to use this service or have received permission from a parent, guardian, or authorized payer. The responsibility for all purchases and payments made within the service lies with the person who completes the transaction.
+                        {t.terms_sec2_text}
                     </Text>
                 </View>
 
                 <View style={styles.section}>
-                    <Text style={styles.sectionHeading}>3. User Content & Copyright</Text>
+                    <Text style={styles.sectionHeading}>{t.terms_sec3_title}</Text>
                     <Text style={styles.paragraph}>
-                        Users retain ownership of the photos they upload. Users grant MEMOTILES a non-exclusive, royalty-free license to the extent necessary for order fulfillment (processing, printing, and delivery). MEMOTILES does not use user photos for marketing purposes without explicit consent. Users are responsible for any copyright violations resulting from uploaded photos.
+                        {t.terms_sec3_text}
                     </Text>
                 </View>
 
                 <View style={styles.section}>
-                    <Text style={styles.sectionHeading}>4. Prohibited Content</Text>
+                    <Text style={styles.sectionHeading}>{t.terms_sec4_title}</Text>
                     <Text style={styles.paragraph}>
-                        Uploading illegal content, items that infringe on copyrights or privacy, or harmful content involving minors is strictly prohibited. MEMOTILES reserves the right to refuse or cancel orders that violate these regulations.
+                        {t.terms_sec4_text}
                     </Text>
                 </View>
 
                 <View style={styles.section}>
-                    <Text style={styles.sectionHeading}>5. Orders & Custom Products</Text>
+                    <Text style={styles.sectionHeading}>{t.terms_sec5_title}</Text>
                     <Text style={styles.paragraph}>
-                        Since all products are custom-made, orders cannot be canceled or changed once printing has begun. Users must carefully review the editing and cropping state of their photos before checkout.
+                        {t.terms_sec5_text}
                     </Text>
                 </View>
 
                 <View style={styles.section}>
-                    <Text style={styles.sectionHeading}>6. Order Status Information</Text>
+                    <Text style={styles.sectionHeading}>{t.terms_sec6_title}</Text>
                     <Text style={styles.paragraph}>
-                        Order statuses (Paid, Processing, Printing, Shipped, Delivered, etc.) are provided for informational purposes only and may differ slightly from the real-time situation.
+                        {t.terms_sec6_text}
                     </Text>
                 </View>
 
                 <View style={styles.section}>
-                    <Text style={styles.sectionHeading}>7. Pricing & Payments</Text>
+                    <Text style={styles.sectionHeading}>{t.terms_sec7_title}</Text>
                     <Text style={styles.paragraph}>
-                        Product prices are displayed on the screen before checkout. Payments are processed through third-party payment systems, and any applicable taxes or customs duties are the responsibility of the user.
+                        {t.terms_sec7_text}
                     </Text>
                 </View>
 
                 <View style={styles.section}>
-                    <Text style={styles.sectionHeading}>8. Shipping & Delivery</Text>
+                    <Text style={styles.sectionHeading}>{t.terms_sec8_title}</Text>
                     <Text style={styles.paragraph}>
-                        Delivery dates are estimates and not guaranteed arrival dates. MEMOTILES is not responsible for delivery delays caused by logistics conditions, customs, or incorrect address entry.
+                        {t.terms_sec8_text}
                     </Text>
                 </View>
 
                 <View style={styles.section}>
-                    <Text style={styles.sectionHeading}>9. Returns & Refunds</Text>
+                    <Text style={styles.sectionHeading}>{t.terms_sec9_title}</Text>
                     <Text style={styles.paragraph}>
-                        Due to the nature of custom-made products, refunds for a simple change of mind are not possible. Reprints or refunds are only available in cases of defective or damaged products, and users must contact customer support within a reasonable period after delivery.
+                        {t.terms_sec9_text}
                     </Text>
                 </View>
 
                 <View style={styles.section}>
-                    <Text style={styles.sectionHeading}>10. Intellectual Property</Text>
+                    <Text style={styles.sectionHeading}>{t.terms_sec10_title}</Text>
                     <Text style={styles.paragraph}>
-                        All rights to the MEMOTILES brand, UI design, and systems belong to MEMOTILES, and unauthorized use is prohibited.
+                        {t.terms_sec10_text}
                     </Text>
                 </View>
 
                 <View style={styles.section}>
-                    <Text style={styles.sectionHeading}>11. Service Changes</Text>
+                    <Text style={styles.sectionHeading}>{t.terms_sec11_title}</Text>
                     <Text style={styles.paragraph}>
-                        MEMOTILES may modify, suspend, or terminate part or all of the service as needed.
+                        {t.terms_sec11_text}
                     </Text>
                 </View>
 
                 <View style={styles.section}>
-                    <Text style={styles.sectionHeading}>12. Limitation of Liability</Text>
+                    <Text style={styles.sectionHeading}>{t.terms_sec12_title}</Text>
                     <Text style={styles.paragraph}>
-                        The service is provided 'as is'. Minor differences between screen colors and actual printed materials may occur. MEMOTILES' liability is limited to the amount paid at the time of the order.
+                        {t.terms_sec12_text}
                     </Text>
                 </View>
 
                 <View style={styles.section}>
-                    <Text style={styles.sectionHeading}>13. Changes to Terms</Text>
+                    <Text style={styles.sectionHeading}>{t.terms_sec13_title}</Text>
                     <Text style={styles.paragraph}>
-                        These Terms may be updated from time to time, and updated Terms become effective immediately upon being posted on the website.
+                        {t.terms_sec13_text}
                     </Text>
                 </View>
 
                 <View style={styles.section}>
-                    <Text style={styles.sectionHeading}>14. Contact Information</Text>
+                    <Text style={styles.sectionHeading}>{t.terms_sec14_title}</Text>
                     <Text style={styles.paragraph}>
-                        If you have any questions, please contact our support team at <Text style={styles.link} onPress={handleEmailPress}>support@memotiles.com</Text>.
+                        {t.terms_sec14_text} <Text style={styles.link} onPress={handleEmailPress}>{t.supportEmail}</Text>.
                     </Text>
                 </View>
             </ScrollView>
@@ -145,7 +153,8 @@ const styles = StyleSheet.create({
         borderBottomColor: colors.border,
     },
     backBtn: {
-        padding: 4,
+        padding: 8,
+        marginLeft: -4,
     },
     title: {
         fontSize: 17,

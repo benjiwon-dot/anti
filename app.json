@@ -3,12 +3,10 @@
     "name": "memotile_app_anti",
     "slug": "memotile-app-anti",
     "version": "1.0.0",
-    "scheme": "memotile",
-    "web": {
-      "bundler": "metro",
-      "output": "static",
-      "favicon": "./public/favicon.ico"
-    },
+    "scheme": [
+      "memotile",
+      "com.googleusercontent.apps.166543035480-d0hra4ce54ljrvnka86v6n0tvfkrt25b"
+    ],
     "plugins": [
       "expo-router",
       "expo-web-browser"
@@ -17,17 +15,27 @@
       "package": "com.anonymous.memotileappanti"
     },
     "ios": {
-      "bundleIdentifier": "com.anonymous.memotileappanti"
+      "bundleIdentifier": "com.benjiwon.memotileappanti",
+      "infoPlist": {
+        "CFBundleURLTypes": [
+          {
+            "CFBundleURLSchemes": [
+              "memotile",
+              "com.googleusercontent.apps.166543035480-d0hra4ce54ljrvnka86v6n0tvfkrt25b"
+            ]
+          }
+        ]
+      }
     },
     "extra": {
       "router": {},
       "eas": {
         "projectId": "998b0866-55ab-44aa-a1b1-9b82af8c3fe1"
       },
-      // ✅ 여기 추가
-      "googleWebClientId": "108297942985762814919",
-      "googleIosClientId": "108297942985762814919",
-      "googleAndroidClientId": "108297942985762814919"
+      "googleExpoClientId": "166543035480-m69rkgq6uhqi56ntbbgdbst66cc23a50.apps.googleusercontent.com",
+      "googleIosClientId": "166543035480-d0hra4ce54ljrvnka86v6n0tvfkrt25b.apps.googleusercontent.com",
+      "googleAndroidClientId": "166543035480-i5m8vphpi7bav4iu5e9s1vkad08sfsle.apps.googleusercontent.com",
+      "googleWebClientId": "166543035480-m69rkgq6uhqi56ntbbgdbst66cc23a50.apps.googleusercontent.com"
     }
   }
 }

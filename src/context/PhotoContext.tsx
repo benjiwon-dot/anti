@@ -9,7 +9,7 @@ import React, {
 import type { ImagePickerAsset } from "expo-image-picker";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
-import * as FileSystem from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy";
 
 type DraftStep = "select" | "editor";
 
@@ -146,12 +146,27 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
         }
     };
 
-    // 앱 시작 시 draft 존재 여부만 빠르게 체크 (배너용)
+    // 앱 시작 시 draft 존재 여부만 빠르게 체크 (배너용 + TTL 체크)
     useEffect(() => {
         (async () => {
             try {
                 const data = await AsyncStorage.getItem(DRAFT_KEY);
-                setHasDraft(!!data);
+                if (data) {
+                    const draft: DraftPayload = JSON.parse(data);
+                    const now = Date.now();
+                    const age = now - (draft.timestamp || 0);
+                    const TTL = 48 * 3600 * 1000; // 48 hours
+
+                    if (age > TTL) {
+                        console.log("[Draft] Expired (48h+), clearing on start.");
+                        await AsyncStorage.removeItem(DRAFT_KEY);
+                        setHasDraft(false);
+                    } else {
+                        setHasDraft(true);
+                    }
+                } else {
+                    setHasDraft(false);
+                }
             } catch {
                 setHasDraft(false);
             }
@@ -171,6 +186,7 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
             };
 
             await AsyncStorage.setItem(DRAFT_KEY, JSON.stringify(payload));
+            if (__DEV__) console.log("[Draft] Saved/Updated step:", step);
             setHasDraft(true);
         } catch (e) {
             console.error("Failed to save draft", e);
@@ -191,6 +207,16 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
                 return false;
             }
 
+            // double check TTL during actual load
+            const now = Date.now();
+            const age = now - (draft.timestamp || 0);
+            const TTL = 48 * 3600 * 1000;
+            if (age > TTL) {
+                console.log("[Draft] Load aborted: expired.");
+                await clearDraft();
+                return false;
+            }
+
             // draft.photos는 SerializableAsset[] 이지만, ImagePickerAsset과 호환되는 필드들이라 그대로 사용 가능
             setPhotosState(draft.photos as unknown as ImagePickerAsset[]);
             setCurrentIndexState(draft.currentIndex || 0);
@@ -207,6 +233,7 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
         try {
             await AsyncStorage.removeItem(DRAFT_KEY);
             setHasDraft(false);
+            if (__DEV__) console.log("[Draft] Explicitly cleared.");
         } catch (e) {
             console.error("Failed to clear draft", e);
         }
@@ -257,6 +284,8 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
     const clearPhotos = () => {
         setPhotosState([]);
         setCurrentIndexState(0);
+        clearDraft();
+        if (__DEV__) console.log("[Draft] cleared because photos cleared");
     };
 
     const setCurrentIndex: PhotoContextType["setCurrentIndex"] = async (index, opts) => {

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     View,
     Text,
@@ -25,6 +25,9 @@ import {
 import { auth } from "../lib/firebase";
 import { resetPassword } from "../lib/firebaseAuth";
 
+import { useGoogleAuthRequest } from '../utils/firebaseAuth';
+import { Image } from 'react-native';
+
 export default function AuthEmailScreen() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
@@ -35,6 +38,15 @@ export default function AuthEmailScreen() {
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
     const [loading, setLoading] = useState(false);
+
+    // Google Auth Hook (Auto-handles Firebase sign-in)
+    const { promptAsync, isReady, isSigningIn, error: authError } = useGoogleAuthRequest();
+
+    useEffect(() => {
+        if (authError) {
+            Alert.alert("Login Error", authError);
+        }
+    }, [authError]);
 
     const handleAuth = async () => {
         const emailTrim = (email ?? "").trim();
@@ -231,6 +243,35 @@ export default function AuthEmailScreen() {
                             )}
                         </TouchableOpacity>
 
+                        {/* Divider */}
+                        <View style={styles.dividerRow}>
+                            <View style={styles.line} />
+                            <Text style={styles.dividerText}>OR</Text>
+                            <View style={styles.line} />
+                        </View>
+
+                        {/* Google Login Button */}
+                        <TouchableOpacity
+                            style={[styles.socialBtn, (isSigningIn || !isReady) && styles.disabledBtn]}
+                            onPress={() => promptAsync()}
+                            disabled={isSigningIn || !isReady}
+                        >
+                            {isSigningIn ? (
+                                <ActivityIndicator color="#000" />
+                            ) : (
+                                <View style={styles.socialBtnContent}>
+                                    <Image
+                                        source={require('../assets/google_logo.png')}
+                                        style={styles.socialIcon}
+                                        resizeMode="contain"
+                                    />
+                                    <Text style={styles.socialBtnText}>
+                                        {t['signUpGoogle'] || "Continue with Google"}
+                                    </Text>
+                                </View>
+                            )}
+                        </TouchableOpacity>
+
                         {/* Extra Actions */}
                         {!isSignUp && (
                             <View style={styles.extraActions}>
@@ -330,4 +371,19 @@ const styles = StyleSheet.create({
     secondaryBtnText: { color: '#666', fontSize: 14, textDecorationLine: 'underline' },
     refreshBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8 },
     refreshBtnText: { color: '#007AFF', fontWeight: '600', fontSize: 14 },
+    dividerRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 24 },
+    line: { flex: 1, height: 1, backgroundColor: '#e5e7eb' },
+    dividerText: { marginHorizontal: 16, color: '#9ca3af', fontSize: 12, fontWeight: '600' },
+    socialBtn: {
+        height: 52,
+        borderRadius: 26,
+        borderWidth: 1,
+        borderColor: '#e5e7eb',
+        backgroundColor: '#fff',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    socialBtnContent: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+    socialIcon: { width: 18, height: 18 },
+    socialBtnText: { color: '#333', fontSize: 16, fontWeight: '600' },
 });

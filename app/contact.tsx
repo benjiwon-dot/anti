@@ -10,7 +10,7 @@ import { colors } from '../src/theme/colors';
 import { shadows } from '../src/theme/shadows';
 import { layout } from '../src/theme/layout';
 
-const EMAIL_SUPPORT = 'support@memotiles.com';
+const EMAIL_SUPPORT = 'support@memotile.com';
 
 export default function Contact() {
     const router = useRouter();
@@ -35,8 +35,14 @@ export default function Contact() {
     return (
         <View style={[styles.container, { paddingTop: insets.top }]}>
             <View style={styles.header}>
-                <Pressable onPress={() => router.back()} style={styles.backBtn}>
-                    <ChevronLeft size={24} color="#111" />
+                <Pressable
+                    onPress={() => router.back()}
+                    style={styles.backBtn}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                    <View pointerEvents="none">
+                        <ChevronLeft size={24} color="#111" />
+                    </View>
                 </Pressable>
                 <Text style={styles.title}>{t.chatTitle}</Text>
                 <View style={{ width: 24 }} />
@@ -104,7 +110,8 @@ const styles = StyleSheet.create({
         borderBottomColor: colors.border,
     },
     backBtn: {
-        padding: 4,
+        padding: 8,
+        marginLeft: -4,
     },
     title: {
         fontSize: 17,

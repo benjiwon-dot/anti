@@ -12,6 +12,11 @@ export interface OrderItem {
 
     quantity: number;
     filterId: string;
+    filterParams?: {
+        matrix: number[];
+        overlayColor?: string;
+        overlayOpacity?: number;
+    } | null;
     cropPx: {
         x: number;
         y: number;

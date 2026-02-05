@@ -54,7 +54,9 @@ export default function TabLayout() {
                 options={{
                     title: t.home,
                     tabBarIcon: ({ color }) => (
-                        <Home size={24} color={color} strokeWidth={2.5} />
+                        <View pointerEvents="none">
+                            <Home size={24} color={color} strokeWidth={2.5} />
+                        </View>
                     ),
                 }}
             />
@@ -63,7 +65,9 @@ export default function TabLayout() {
                 options={{
                     title: t.orders,
                     tabBarIcon: ({ color }) => (
-                        <Package size={24} color={color} strokeWidth={2.5} />
+                        <View pointerEvents="none">
+                            <Package size={24} color={color} strokeWidth={2.5} />
+                        </View>
                     ),
                 }}
             />
@@ -72,7 +76,9 @@ export default function TabLayout() {
                 options={{
                     title: t.profile,
                     tabBarIcon: ({ color }) => (
-                        <User size={24} color={color} strokeWidth={2.5} />
+                        <View pointerEvents="none">
+                            <User size={24} color={color} strokeWidth={2.5} />
+                        </View>
                     ),
                 }}
             />

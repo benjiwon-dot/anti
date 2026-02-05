@@ -10,7 +10,7 @@ import { colors } from "../theme/colors";
 // Firebase / Auth / Promo
 import { auth } from "../lib/firebase";
 import { User } from "firebase/auth";
-import { useGoogleAuthRequest, signInWithGoogleCredential } from "../utils/firebaseAuth";
+import { useGoogleAuthRequest } from "../utils/firebaseAuth";
 import { verifyAndRedeemPromo, PromoResult, PromoType } from "../utils/promo";
 
 const LoginButton = ({ text, onPress, style, disabled, icon }: { text: string, onPress: () => void, style?: any, disabled?: boolean, icon?: React.ReactNode }) => (
@@ -27,7 +27,6 @@ export default function CheckoutStepOneScreen() {
 
     // Auth State
     const [currentUser, setCurrentUser] = useState<User | null>(null);
-    const [isLoggingIn, setIsLoggingIn] = useState(false);
 
     // Promo State
     const [showPromo, setShowPromo] = useState(false);
@@ -43,24 +42,14 @@ export default function CheckoutStepOneScreen() {
     const PRICE_PER_TILE = locale === 'TH' ? 200 : 6.45;
     const CURRENCY_SYMBOL = locale === 'TH' ? '฿' : '$';
 
-    // Google Auth Hook
-    const { request, response, promptAsync } = useGoogleAuthRequest();
+    // Google Auth Hook (Auto-handles Firebase sign-in)
+    const { promptAsync, isReady, isSigningIn, error: authError } = useGoogleAuthRequest();
 
     useEffect(() => {
-        // Handle Google Response
-        if (response?.type === 'success') {
-            const { id_token } = response.params;
-            if (id_token) {
-                setIsLoggingIn(true);
-                signInWithGoogleCredential(auth, id_token)
-                    .then((cred) => setCurrentUser(cred.user))
-                    .catch((e) => Alert.alert("Login Failed", e.message))
-                    .finally(() => setIsLoggingIn(false));
-            }
-        } else if (response?.type === 'error') {
-            Alert.alert("Login Error", "Could not sign in with Google.");
+        if (authError) {
+            Alert.alert("Login Error", authError);
         }
-    }, [response]);
+    }, [authError]);
 
     useEffect(() => {
         const unsub = auth.onAuthStateChanged(user => {
@@ -121,7 +110,7 @@ export default function CheckoutStepOneScreen() {
     };
 
     const handleGoogleLogin = () => {
-        if (isLoggingIn) return;
+        if (isSigningIn) return;
         promptAsync();
     };
 
@@ -151,8 +140,14 @@ export default function CheckoutStepOneScreen() {
     return (
         <SafeAreaView style={styles.container}>
             <View style={styles.header}>
-                <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-                    <Ionicons name="chevron-back" size={24} color="black" />
+                <TouchableOpacity
+                    onPress={() => router.back()}
+                    style={styles.backBtn}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                    <View pointerEvents="none">
+                        <Ionicons name="chevron-back" size={24} color="black" />
+                    </View>
                 </TouchableOpacity>
                 <Text style={styles.headerTitle}>{t['checkoutTitle'] || "Checkout"}</Text>
                 <View style={{ width: 40 }} />
@@ -233,12 +228,17 @@ export default function CheckoutStepOneScreen() {
                     <View style={styles.authSection}>
                         {!currentUser ? (
                             <>
+                                <View style={styles.signInToContinueContainer}>
+                                    <Text style={styles.signInToContinueText}>
+                                        {t['signInToContinue'] || "Please sign in to continue."}
+                                    </Text>
+                                </View>
                                 <LoginButton
                                     text={t['signUpGoogle'] || "Sign up with Google"}
                                     onPress={handleGoogleLogin}
                                     style={{ backgroundColor: '#fff', borderWidth: 1, borderColor: '#ddd' }}
-                                    disabled={isLoggingIn}
-                                    icon={<GoogleIconFallback />}
+                                    disabled={!isReady || isSigningIn}
+                                    icon={isSigningIn ? <ActivityIndicator size="small" color="#000" /> : <GoogleIconFallback />}
                                 />
                                 {Platform.OS === 'ios' && (
                                     <LoginButton
@@ -257,9 +257,13 @@ export default function CheckoutStepOneScreen() {
                             </>
                         ) : (
                             <View style={styles.loggedInInfo}>
-                                <Text style={styles.loggedInText}>Logged in as {currentUser.email || "User"}</Text>
+                                <Text style={styles.loggedInText}>
+                                    {t['loggedInAs'] || "Logged in as"} {currentUser.email || "User"}
+                                </Text>
                                 <TouchableOpacity onPress={() => auth.signOut()}>
-                                    <Text style={{ color: '#666', fontSize: 13, marginTop: 4, textDecorationLine: 'underline' }}>Sign Out</Text>
+                                    <Text style={styles.signOutText}>
+                                        {t['signOut'] || "Sign Out"}
+                                    </Text>
                                 </TouchableOpacity>
                             </View>
                         )}
@@ -331,6 +335,9 @@ const styles = StyleSheet.create({
 
     loggedInInfo: { padding: 15, backgroundColor: '#e0f2fe', borderRadius: 12, alignItems: 'center' },
     loggedInText: { color: '#0284c7', fontWeight: '600' },
+    signOutText: { color: '#666', fontSize: 13, marginTop: 4, textDecorationLine: 'underline' },
+    signInToContinueContainer: { marginBottom: 12, alignItems: 'center' },
+    signInToContinueText: { fontSize: 14, color: '#666', opacity: 0.8 },
 
     nextBtn: { height: 56, borderRadius: 28, backgroundColor: colors.ink || '#000', alignItems: 'center', justifyContent: 'center', marginTop: 10 },
     disabledBtn: { backgroundColor: '#ccc' },

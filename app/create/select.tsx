@@ -49,8 +49,14 @@ export default function PhotoSelect() {
             {/* HEADER */}
             <BlurView intensity={80} tint="light" style={[styles.header, { paddingTop: insets.top }]}>
                 <View style={styles.headerContent}>
-                    <Pressable onPress={() => router.back()} style={styles.backBtn}>
-                        <Feather name="arrow-left" size={24} color={colors.ink} />
+                    <Pressable
+                        onPress={() => router.back()}
+                        style={styles.backBtn}
+                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    >
+                        <View pointerEvents="none">
+                            <Feather name="arrow-left" size={24} color={colors.ink} />
+                        </View>
                     </Pressable>
                     <Text style={styles.headerTitle}>{t.selectPhotos}</Text>
                     <View style={{ width: 40 }} />
@@ -88,8 +94,10 @@ export default function PhotoSelect() {
                         }}
                         disabled={photos.length === 0}
                     >
-                        <Text style={styles.continueText}>{t.continue}</Text>
-                        <Feather name="arrow-right" size={20} color="#fff" />
+                        <View pointerEvents="none" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                            <Text style={styles.continueText}>{t.continue}</Text>
+                            <Feather name="arrow-right" size={20} color="#fff" />
+                        </View>
                     </Pressable>
                 </View>
             </View>
@@ -109,8 +117,14 @@ export default function PhotoSelect() {
                         )}
                     </View>
 
-                    <Pressable style={[styles.closeBtn, { top: insets.top + 20 }]} onPress={() => setSelectedPreview(null)}>
-                        <Feather name="x" size={24} color="#fff" />
+                    <Pressable
+                        style={[styles.closeBtn, { top: insets.top + 20 }]}
+                        onPress={() => setSelectedPreview(null)}
+                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    >
+                        <View pointerEvents="none">
+                            <Feather name="x" size={24} color="#fff" />
+                        </View>
                     </Pressable>
                 </View>
             </Modal>

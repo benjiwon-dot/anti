@@ -112,7 +112,7 @@ export default function TermsOfService() {
                 <section style={styles.section}>
                     <h2 style={styles.sectionHeading}>14. Contact Information</h2>
                     <p style={styles.paragraph}>
-                        If you have any questions, please contact our support team at <a href="mailto:support@memotiles.com" style={styles.link}>support@memotiles.com</a>.
+                        If you have any questions, please contact our support team at <a href="mailto:support@memotile.com" style={styles.link}>support@memotile.com</a>.
                     </p>
                 </section>
             </div>

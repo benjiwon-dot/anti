@@ -4,106 +4,114 @@ import { useRouter } from 'expo-router';
 import { ChevronLeft } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { useLanguage } from '../src/context/LanguageContext';
 import { colors } from '../src/theme/colors';
 
 export default function PrivacyPolicy() {
     const router = useRouter();
+    const { t } = useLanguage();
     const insets = useSafeAreaInsets();
 
     const handleEmailPress = () => {
-        Linking.openURL('mailto:support@memotiles.com');
+        Linking.openURL(`mailto:${t.supportEmail}`);
     };
 
     return (
         <View style={[styles.container, { paddingTop: insets.top }]}>
             <View style={styles.header}>
-                <Pressable onPress={() => router.back()} style={styles.backBtn}>
-                    <ChevronLeft size={24} color="#111" />
+                <Pressable
+                    onPress={() => router.back()}
+                    style={styles.backBtn}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                    <View pointerEvents="none">
+                        <ChevronLeft size={24} color="#111" />
+                    </View>
                 </Pressable>
-                <Text style={styles.title}>Privacy Policy</Text>
+                <Text style={styles.title}>{t.privacy_title}</Text>
                 <View style={{ width: 24 }} />
             </View>
 
             <ScrollView contentContainerStyle={styles.content}>
-                <Text style={styles.pageTitle}>Privacy Policy</Text>
+                <Text style={styles.pageTitle}>{t.privacy_title}</Text>
 
-                <Section title="1. Personal Information Collected">
+                <Section title={t.privacy_sec1_title}>
                     <View style={styles.list}>
-                        <Bullet>Contact information (Name, Email address)</Bullet>
-                        <Bullet>Shipping information (Address, Phone number)</Bullet>
-                        <Bullet>Payment-related (Processed by third-party)</Bullet>
-                        <Bullet>Usage data and device information</Bullet>
-                        <Bullet>Uploaded images and edit data</Bullet>
+                        <Bullet>{t.privacy_sec1_bullet1}</Bullet>
+                        <Bullet>{t.privacy_sec1_bullet2}</Bullet>
+                        <Bullet>{t.privacy_sec1_bullet3}</Bullet>
+                        <Bullet>{t.privacy_sec1_bullet4}</Bullet>
+                        <Bullet>{t.privacy_sec1_bullet5}</Bullet>
                     </View>
                 </Section>
 
-                <Section title="2. Purpose of Collection and Use">
+                <Section title={t.privacy_sec2_title}>
                     <View style={styles.list}>
-                        <Bullet>Order fulfillment and delivery</Bullet>
-                        <Bullet>Payment processing and verification</Bullet>
-                        <Bullet>Customer support and inquiries</Bullet>
-                        <Bullet>Service improvement</Bullet>
-                        <Bullet>Legal compliance</Bullet>
+                        <Bullet>{t.privacy_sec2_bullet1}</Bullet>
+                        <Bullet>{t.privacy_sec2_bullet2}</Bullet>
+                        <Bullet>{t.privacy_sec2_bullet3}</Bullet>
+                        <Bullet>{t.privacy_sec2_bullet4}</Bullet>
+                        <Bullet>{t.privacy_sec2_bullet5}</Bullet>
                     </View>
                 </Section>
 
-                <Section title="3. Data Retention">
+                <Section title={t.privacy_sec3_title}>
                     <Text style={styles.paragraph}>
-                        Retained only as necessary for fulfillment or legal obligations.
+                        {t.privacy_sec3_text}
                     </Text>
                 </Section>
 
-                <Section title="4. Third-Party Sharing">
+                <Section title={t.privacy_sec4_title}>
                     <Text style={styles.paragraph}>
-                        Shared only with necessary partners:
+                        {t.privacy_sec4_text}
                     </Text>
                     <View style={styles.list}>
-                        <Bullet>Logistics for delivery</Bullet>
-                        <Bullet>Payment processors</Bullet>
-                        <Bullet>Legal requirements</Bullet>
+                        <Bullet>{t.privacy_sec4_bullet1}</Bullet>
+                        <Bullet>{t.privacy_sec4_bullet2}</Bullet>
+                        <Bullet>{t.privacy_sec4_bullet3}</Bullet>
                     </View>
                 </Section>
 
-                <Section title="5. Outsourcing">
+                <Section title={t.privacy_sec5_title}>
                     <Text style={styles.paragraph}>
-                        Data processing outsourced to cloud/payment/logistics providers.
+                        {t.privacy_sec5_text}
                     </Text>
                 </Section>
 
-                <Section title="6. User Rights">
+                <Section title={t.privacy_sec6_title}>
                     <Text style={styles.paragraph}>
-                        Access, correct, delete, or restrict data use at any time.
+                        {t.privacy_sec6_text}
                     </Text>
                 </Section>
 
-                <Section title="7. Security">
+                <Section title={t.privacy_sec7_title}>
                     <Text style={styles.paragraph}>
-                        Technical/organizational safeguards implemented.
+                        {t.privacy_sec7_text}
                     </Text>
                 </Section>
 
-                <Section title="8. Minors">
+                <Section title={t.privacy_sec8_title}>
                     <Text style={styles.paragraph}>
-                        Accessible to all, but authorized payer responsible.
+                        {t.privacy_sec8_text}
                     </Text>
                 </Section>
 
-                <Section title="9. Cookies">
+                <Section title={t.privacy_sec9_title}>
                     <Text style={styles.paragraph}>
-                        Cookies used for functionality/analytics.
+                        {t.privacy_sec9_text}
                     </Text>
                 </Section>
 
-                <Section title="10. Updates">
+                <Section title={t.privacy_sec10_title}>
                     <Text style={styles.paragraph}>
-                        Effective immediately upon posting.
+                        {t.privacy_sec10_text}
                     </Text>
                 </Section>
 
                 <View style={styles.section}>
-                    <Text style={styles.sectionHeading}>11. Contact</Text>
+                    <Text style={styles.sectionHeading}>{t.privacy_sec11_title}</Text>
                     <Text style={styles.paragraph}>
-                        Inquiries: <Text style={styles.link} onPress={handleEmailPress}>support@memotiles.com</Text>.
+                        {t.privacy_sec11_text} <Text style={styles.link} onPress={handleEmailPress}>{t.supportEmail}</Text>.
                     </Text>
                 </View>
             </ScrollView>
@@ -138,7 +146,8 @@ const styles = StyleSheet.create({
         borderBottomColor: colors.border,
     },
     backBtn: {
-        padding: 4,
+        padding: 8,
+        marginLeft: -4,
     },
     title: {
         fontSize: 17,

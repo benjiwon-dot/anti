@@ -9,7 +9,6 @@ import {
     Alert,
     Linking,
     type PressableStateCallbackType,
-
     type StyleProp,
     type ViewStyle,
 } from "react-native";
@@ -19,6 +18,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import { BlurView } from "expo-blur";
+import { manipulateAsync, SaveFormat } from "expo-image-manipulator"; // ✅ import 위치 이동
 
 import { colors } from "../../src/theme/colors";
 import { layout } from "../../src/theme/layout";
@@ -27,7 +27,6 @@ import { typography } from "../../src/theme/typography";
 import { useLanguage } from "../../src/context/LanguageContext";
 import { usePhoto } from "../../src/context/PhotoContext";
 
-// --- Assets ---
 // --- Assets ---
 const heroNew1 = require("../../src/assets/hero_new_1.jpg") as ImageSource;
 const heroNew2 = require("../../src/assets/hero_new_2.jpg") as ImageSource;
@@ -51,14 +50,10 @@ export default function Index() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
     const { t, locale, setLocale } = useLanguage();
-    // Destructure everything we need from usePhoto
     const { setPhotos, saveDraft, hasDraft, loadDraft } = usePhoto();
 
     const [slideshowIndex, setSlideshowIndex] = useState(0);
     const [billboardIndex, setBillboardIndex] = useState(0);
-
-    // Draft loading on mount? Or just rely on hasDraft if context checks it.
-    // We can rely on hasDraft from context.
 
     // Resume Handler
     const handleResume = async () => {
@@ -66,7 +61,6 @@ export default function Index() {
         if (loaded) {
             router.push("/create/select");
         } else {
-            // Draft invalid
             Alert.alert("", t.noPhotosSelected);
         }
     };
@@ -113,21 +107,48 @@ export default function Index() {
 
         const result = await ImagePicker.launchImageLibraryAsync({
             mediaTypes: ImagePicker.MediaTypeOptions.Images,
-            allowsMultipleSelection: true,
+            allowsMultipleSelection: true, // ✅ 수정됨: 다중 선택 허용 옵션 추가
             selectionLimit: 20,
             quality: 1,
         });
 
-
-
         if (!result.canceled && result.assets?.length) {
-            setPhotos(result.assets);
-            await saveDraft('select'); // Save draft
+            // ✅ [수정됨] 2000px 프록시 이미지 생성 로직
+            const processedAssets = await Promise.all(
+                result.assets.map(async (asset) => {
+                    // 1. 5000px 원본 정보 따로 저장
+                    const originalUri = asset.uri;
+                    const originalWidth = asset.width;
+                    const originalHeight = asset.height;
+
+                    // 2. 앱에서 쓸 이미지는 2000px로 리사이징 (메모리 보호)
+                    const manipulated = await manipulateAsync(
+                        originalUri,
+                        [{ resize: { width: 2000 } }], // 👈 여기가 2000px 설정입니다
+                        { compress: 0.8, format: SaveFormat.JPEG }
+                    );
+
+                    // 3. 데이터 합치기
+                    return {
+                        ...asset,
+                        uri: manipulated.uri,       // 화면엔 2000px 보여줌
+                        width: manipulated.width,   // 2000 (또는 비율에 맞게 줄어든 높이)
+                        height: manipulated.height,
+
+                        // 👇 서버 업로드용 진짜 원본 경로 숨겨두기
+                        originalUri: originalUri,
+                        originalWidth: originalWidth,
+                        originalHeight: originalHeight
+                    };
+                })
+            );
+
+            setPhotos(processedAssets);
+            await saveDraft('select');
             router.push("/create/select");
         }
     };
 
-    // ✅ Pressable style callback 타입 안전 처리
     const primaryBtnStyle = ({ pressed }: PressableStateCallbackType): StyleProp<ViewStyle> => [
         styles.primaryBtn,
         pressed && { transform: [{ scale: 0.98 }] },
@@ -139,7 +160,6 @@ export default function Index() {
 
     return (
         <View style={[styles.container, { paddingTop: insets.top }]}>
-            {/* --- RESUME BANNER (Fixed above TabBar) --- */}
             {hasDraft && (
                 <View style={[styles.resumeBanner, { bottom: layout.spacing.bottomTabHeight + insets.bottom + 20 }]}>
                     <View style={styles.resumeContent}>
@@ -155,17 +175,14 @@ export default function Index() {
                 </View>
             )}
 
-            {/* --- TOP NAV (Blur Effect) --- */}
             <BlurView intensity={80} tint="light" style={[styles.topNav, { paddingTop: insets.top }]}>
                 <View style={styles.navContent}>
                     <View style={styles.logoGroup}>
                         <Text style={styles.brandTitle}>MEMOTILE</Text>
-
                     </View>
 
                     <View style={styles.langContainer}>
                         <Feather
-                            // Feather name 타입이 빡세서 literal 캐스팅으로 안정화
                             name={"globe" as any}
                             size={14}
                             color={colors.textSecondary}
@@ -196,7 +213,6 @@ export default function Index() {
                 }}
                 showsVerticalScrollIndicator={false}
             >
-                {/* --- HERO SECTION --- */}
                 <View style={styles.hero}>
                     <View style={styles.heroContent}>
                         <View style={styles.headlineGroup}>
@@ -235,7 +251,6 @@ export default function Index() {
                     </View>
                 </View>
 
-                {/* --- KEY BENEFITS --- */}
                 <View style={[styles.section, { backgroundColor: colors.canvas }]}>
                     <Text style={styles.sectionSmallTitle}>{t.benefitsTitle}</Text>
                     <View style={styles.grid}>
@@ -258,7 +273,6 @@ export default function Index() {
                     </View>
                 </View>
 
-                {/* --- AUTO-ROTATING BILLBOARD --- */}
                 <View style={styles.section}>
                     <View style={styles.billboardContainer}>
                         <View style={styles.billboardImgWrapper}>
@@ -307,7 +321,6 @@ export default function Index() {
                     </View>
                 </View>
 
-                {/* --- HOW IT WORKS --- */}
                 <View style={styles.section}>
                     <Text style={styles.sectionTitle}>{t.howItWorks}</Text>
                     <View style={styles.stepsContainer}>
@@ -317,14 +330,12 @@ export default function Index() {
                     </View>
                 </View>
 
-                {/* --- DELIVERY PROMISE --- */}
                 <View style={styles.deliverySection}>
                     <Feather name={"truck" as any} size={40} color="#fff" style={{ marginBottom: 16 }} />
                     <Text style={styles.deliveryTitle}>{t.deliveryHeadline}</Text>
                     <Text style={styles.deliverySubtitle}>{t.deliverySub}</Text>
                 </View>
 
-                {/* --- FOOTER --- */}
                 <View style={styles.footer}>
                     <Text style={styles.footerHelpTitle}>{t.needHelp}</Text>
                     <View style={styles.footerActions}>
@@ -344,7 +355,6 @@ export default function Index() {
     );
 }
 
-// --- Subcomponents ---
 const BenefitCard = ({ icon, title, desc }: { icon: React.ReactNode; title: string; desc: string }) => (
     <View style={styles.benefitCard}>
         <View style={styles.benefitIcon}>{icon}</View>
@@ -367,7 +377,6 @@ const StepItem = ({ num, title, desc }: { num: number; title: string; desc: stri
     </View>
 );
 
-// --- STYLES ---
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.surface },
     topNav: { position: "absolute", top: 0, left: 0, right: 0, zIndex: 100 },
@@ -428,7 +437,8 @@ const styles = StyleSheet.create({
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "center",
-        ...shadows.cta,
+        // ✅ [수정] shadows.cta가 없으므로 shadows.md로 대체 (또는 직접 shadow 스타일 입력)
+        ...shadows.md,
     },
     ctaInner: { flexDirection: "row", alignItems: "center" },
     ctaText: { ...typography.button },
@@ -535,15 +545,14 @@ const styles = StyleSheet.create({
     footerBtnText: { fontSize: 15, fontWeight: "700", color: colors.text },
     legal: { fontSize: 13, color: colors.textSecondary },
 
-    // Resume Banner
     resumeBanner: {
         position: 'absolute',
         left: 16,
         right: 16,
-        backgroundColor: colors.surface, // Use surface or ink? Lets use white with shadow
+        backgroundColor: colors.surface,
         borderRadius: 16,
         padding: 16,
-        zIndex: 90, // below nav but above scroll
+        zIndex: 90,
         ...shadows.md,
         borderWidth: 1,
         borderColor: colors.border,

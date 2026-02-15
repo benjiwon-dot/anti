@@ -27,10 +27,9 @@ type SerializableAsset = Pick<
     | "duration"
     | "exif"
 > & {
-    // ✅ ADD: always keep original/high-res source uri for server-side 5000px print
     originalUri?: string;
-
-    cachedPreviewUri?: string;
+    cachedPreviewUri?: string;   // 에디터 화면용 (1080px)
+    cachedThumbnailUri?: string; // ✅ 필터 리스트용 (200px) - 추가됨
 
     edits?: {
         crop: { x: number; y: number; width: number; height: number };
@@ -45,9 +44,7 @@ type SerializableAsset = Pick<
         committed?: {
             cropPx: { x: number; y: number; width: number; height: number };
             filterId: string;
-            // ✅ optional: keep full filter params if you store them
             filterParams?: any;
-            // ✅ optional: overlay in case you want exact parity
             overlayColor?: string;
             overlayOpacity?: number;
         };
@@ -56,9 +53,8 @@ type SerializableAsset = Pick<
     output?: {
         printUri?: string;
         previewUri?: string;
-        viewUri?: string; // ✅ you use this for checkout/myorder preview
-        sourceUri?: string; // ✅ optional, if you explicitly store it
-
+        viewUri?: string;
+        sourceUri?: string;
         quantity?: number;
         printWidth?: number;
         printHeight?: number;
@@ -85,7 +81,6 @@ interface PhotoContextType {
     updatePhoto: (index: number, updates: Partial<SerializableAsset>) => Promise<void>;
 
     clearPhotos: () => void;
-
     setCurrentIndex: (index: number, opts?: { persist?: boolean; step?: DraftStep }) => Promise<void>;
 
     saveDraft: (step: DraftStep, override?: { photos?: ImagePickerAsset[]; currentIndex?: number }) => Promise<void>;
@@ -101,7 +96,6 @@ export const usePhoto = () => {
     return ctx;
 };
 
-// ✅ ensure originalUri is always set once and never lost
 function normalizeAsset(a: ImagePickerAsset): ImagePickerAsset {
     const anyA = a as any;
     const originalUri = anyA.originalUri || anyA.output?.sourceUri || a.uri;
@@ -112,8 +106,7 @@ function toSerializableAsset(a: ImagePickerAsset): SerializableAsset {
     const anyA = a as any;
     return {
         uri: a.uri,
-        originalUri: anyA.originalUri || anyA.output?.sourceUri || a.uri, // ✅ keep
-
+        originalUri: anyA.originalUri || anyA.output?.sourceUri || a.uri,
         width: a.width,
         height: a.height,
         assetId: a.assetId,
@@ -122,8 +115,8 @@ function toSerializableAsset(a: ImagePickerAsset): SerializableAsset {
         mimeType: a.mimeType,
         duration: anyA.duration,
         exif: anyA.exif,
-
         cachedPreviewUri: anyA.cachedPreviewUri,
+        cachedThumbnailUri: anyA.cachedThumbnailUri, // ✅ 저장
         edits: anyA.edits,
         output: anyA.output,
         frameRect: anyA.frameRect,
@@ -139,28 +132,37 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
     const generationQueue = React.useRef<Set<string>>(new Set());
     const saveDraftTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
+    // ✅ [핵심] 미리보기 생성 최적화 (200px, 1080px 동시 생성)
     const generatePreview = async (asset: ImagePickerAsset, index: number) => {
         const id = asset.assetId || asset.uri;
         if (generationQueue.current.has(id)) return;
-        if ((asset as any).cachedPreviewUri) return;
+
+        // 이미 둘 다 있으면 스킵
+        if ((asset as any).cachedPreviewUri && (asset as any).cachedThumbnailUri) return;
 
         generationQueue.current.add(id);
         try {
             let inputUri = (asset as any).originalUri || asset.uri;
-
-            // content:// -> file:// for manipulator stability
+            // Android content:// 처리
             if (typeof inputUri === "string" && inputUri.startsWith("content://")) {
                 const base = (FileSystem as any).cacheDirectory ?? (FileSystem as any).documentDirectory;
-                const dest = `${base}cache_pre_${Date.now()}.jpg`;
+                const dest = `${base}cache_org_${Date.now()}.jpg`;
                 await FileSystem.copyAsync({ from: inputUri, to: dest });
                 inputUri = dest;
             }
 
-            // ✅ keep background preview small (memory-safe)
-            const result = await manipulateAsync(
+            // 1. 에디터용 (1080px - 충분히 고화질이나 메모리 절약)
+            const previewResult = await manipulateAsync(
                 inputUri,
-                [{ resize: { width: 1000 } }],
-                { compress: 0.8, format: SaveFormat.JPEG }
+                [{ resize: { width: 1280 } }],
+                { compress: 0.9, format: SaveFormat.JPEG }
+            );
+
+            // 2. 필터 리스트용 (200px - 아주 작음, 도미노 현상 해결)
+            const thumbResult = await manipulateAsync(
+                inputUri,
+                [{ resize: { width: 200 } }],
+                { compress: 0.7, format: SaveFormat.JPEG }
             );
 
             setPhotosState((prev) => {
@@ -168,11 +170,15 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
                 const cur = newPhotos[index] as any;
                 if (!cur) return prev;
 
-                // guard: asset might be reordered/replaced
+                // 인덱스가 바뀌었거나 삭제되었을 수 있으므로 ID 체크
                 const same = (cur.assetId && cur.assetId === asset.assetId) || cur.uri === asset.uri;
                 if (!same) return prev;
 
-                newPhotos[index] = { ...cur, cachedPreviewUri: result.uri } as any;
+                newPhotos[index] = {
+                    ...cur,
+                    cachedPreviewUri: previewResult.uri,
+                    cachedThumbnailUri: thumbResult.uri // ✅ 썸네일 저장
+                } as any;
                 return newPhotos;
             });
         } catch (e) {
@@ -191,9 +197,7 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
                     const now = Date.now();
                     const age = now - (draft.timestamp || 0);
                     const TTL = 48 * 3600 * 1000;
-
                     if (age > TTL) {
-                        console.log("[Draft] Expired (48h+), clearing on start.");
                         await AsyncStorage.removeItem(DRAFT_KEY);
                         setHasDraft(false);
                     } else {
@@ -216,16 +220,13 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
                 try {
                     const usePhotos = override?.photos ?? photos;
                     const useIndex = override?.currentIndex ?? currentIndex;
-
                     const payload: DraftPayload = {
                         photos: usePhotos.map((p) => toSerializableAsset(normalizeAsset(p))),
                         currentIndex: Math.max(0, Math.min(useIndex, Math.max(0, usePhotos.length - 1))),
                         step,
                         timestamp: Date.now(),
                     };
-
                     await AsyncStorage.setItem(DRAFT_KEY, JSON.stringify(payload));
-                    if (__DEV__) console.log("[Draft] Saved/Updated step (debounced):", step);
                     setHasDraft(true);
                     resolve();
                 } catch (e) {
@@ -240,7 +241,6 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
         try {
             await AsyncStorage.removeItem(DRAFT_KEY);
             setHasDraft(false);
-            if (__DEV__) console.log("[Draft] Explicitly cleared.");
         } catch (e) {
             console.error("Failed to clear draft", e);
         }
@@ -253,31 +253,23 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
                 setHasDraft(false);
                 return false;
             }
-
             const draft: DraftPayload = JSON.parse(data);
             if (!draft?.photos?.length) {
                 setHasDraft(false);
                 return false;
             }
-
             const now = Date.now();
             const age = now - (draft.timestamp || 0);
             const TTL = 48 * 3600 * 1000;
             if (age > TTL) {
-                console.log("[Draft] Load aborted: expired.");
                 await clearDraft();
                 return false;
             }
-
-            // normalize again to ensure originalUri exists
             const restored = (draft.photos as any[]).map((p) => normalizeAsset(p as any));
             setPhotosState(restored as any);
             setCurrentIndexState(draft.currentIndex || 0);
             setHasDraft(true);
-
-            // regenerate cached previews quickly for first few
             restored.slice(0, 5).forEach((p, i) => generatePreview(p as any, i));
-
             return true;
         } catch (e) {
             console.error("Failed to load draft", e);
@@ -290,44 +282,42 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
         const normalized = newPhotos.map(normalizeAsset);
         setPhotosState(normalized);
         setCurrentIndexState(0);
-
         if (opts?.persist) {
             await saveDraft(opts.step ?? "select", { photos: normalized, currentIndex: 0 });
         }
-
         normalized.slice(0, 5).forEach((p, i) => generatePreview(p, i));
     };
 
     const addPhotos: PhotoContextType["addPhotos"] = async (newPhotos, opts) => {
         const normalizedNew = newPhotos.map(normalizeAsset);
-
         setPhotosState((prev) => {
             const existing = new Set(prev.map((p) => (p as any).originalUri || p.assetId || p.uri));
             const filtered = normalizedNew.filter((p) => !existing.has((p as any).originalUri || p.assetId || p.uri));
             const merged = [...prev, ...filtered];
-
             if (opts?.persist) {
                 saveDraft(opts.step ?? "select", { photos: merged, currentIndex });
             }
-
             const startIdx = prev.length;
             filtered.forEach((p, i) => generatePreview(p, startIdx + i));
-
             return merged;
         });
     };
 
     const updatePhoto: PhotoContextType["updatePhoto"] = async (index, updates) => {
-        setPhotosState((prev) => {
-            const newPhotos = [...prev];
-            if (!newPhotos[index]) return prev;
+        return new Promise<void>((resolve) => {
+            setPhotosState((prev) => {
+                const newPhotos = [...prev];
+                if (!newPhotos[index]) {
+                    resolve();
+                    return prev;
+                }
+                const cur = normalizeAsset(newPhotos[index]);
+                newPhotos[index] = { ...cur, ...updates, originalUri: (cur as any).originalUri } as any;
 
-            // keep originalUri even if caller doesn't include it
-            const cur = normalizeAsset(newPhotos[index]);
-            newPhotos[index] = { ...cur, ...updates, originalUri: (cur as any).originalUri } as any;
-
-            saveDraft("editor", { photos: newPhotos, currentIndex });
-            return newPhotos;
+                saveDraft("editor", { photos: newPhotos, currentIndex });
+                setTimeout(resolve, 0);
+                return newPhotos;
+            });
         });
     };
 
@@ -335,13 +325,11 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
         setPhotosState([]);
         setCurrentIndexState(0);
         clearDraft();
-        if (__DEV__) console.log("[Draft] cleared because photos cleared");
     };
 
     const setCurrentIndex: PhotoContextType["setCurrentIndex"] = async (index, opts) => {
         const next = Math.max(0, Math.min(index, Math.max(0, photos.length - 1)));
         setCurrentIndexState(next);
-
         if (opts?.persist) {
             await saveDraft(opts.step ?? "editor", { currentIndex: next });
         }
@@ -352,14 +340,11 @@ export const PhotoProvider = ({ children }: { children: ReactNode }) => {
             photos,
             currentIndex,
             hasDraft,
-
             setPhotos,
             addPhotos,
             updatePhoto,
             clearPhotos,
-
             setCurrentIndex,
-
             saveDraft,
             loadDraft,
             clearDraft,

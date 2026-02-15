@@ -7,7 +7,6 @@ import {
     Image,
     TouchableOpacity,
     StyleSheet,
-    TextInput,
     ActivityIndicator,
     Alert,
     Platform,
@@ -20,11 +19,10 @@ import { usePhoto } from "../context/PhotoContext";
 import { useLanguage } from "../context/LanguageContext";
 import { colors } from "../theme/colors";
 
-// Firebase / Auth / Promo
+// Firebase / Auth
 import { auth } from "../lib/firebase";
-import { User } from "firebase/auth";
+import { User, GoogleAuthProvider, signInWithCredential } from "firebase/auth"; // ✅ 인증 함수 추가
 import { useGoogleAuthRequest } from "../utils/firebaseAuth";
-import { verifyAndRedeemPromo, PromoType } from "../utils/promo";
 
 const LoginButton = ({
     text,
@@ -54,7 +52,7 @@ const LoginButton = ({
     </TouchableOpacity>
 );
 
-// ✅ 고객앱 Checkout: 5000(print) 기다리지 말고 previewUri(2000대)만 기다린다
+// 5000px(print) 기다리지 않고 previewUri(2000px)만 체크
 async function waitForPreviewUrisSnapshot(photosRef: () => any[], timeoutMs = 15000) {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
@@ -80,23 +78,33 @@ export default function CheckoutStepOneScreen() {
     }, [photos]);
 
     const [currentUser, setCurrentUser] = useState<User | null>(null);
-
-    const [showPromo, setShowPromo] = useState(false);
-    const [promoCode, setPromoCode] = useState("");
-    const [promoStatus, setPromoStatus] = useState<"idle" | "checking" | "applied" | "invalid">("idle");
-    const [discount, setDiscount] = useState<{ type: PromoType; value: number; text?: string } | null>(null);
-    const [isApplyingPromo, setIsApplyingPromo] = useState(false);
-
     const [previewUri, setPreviewUri] = useState<string | null>(null);
 
     const PRICE_PER_TILE = locale === "TH" ? 200 : 6.45;
     const CURRENCY_SYMBOL = locale === "TH" ? "฿" : "$";
 
-    const { promptAsync, isReady, isSigningIn, error: authError } = useGoogleAuthRequest();
+    // ✅ response 객체 추가
+    const { promptAsync, isReady, isSigningIn, error: authError, response } = useGoogleAuthRequest();
 
     useEffect(() => {
         if (authError) Alert.alert("Login Error", authError);
     }, [authError]);
+
+    // ✅ [핵심 추가] 구글 로그인 응답 처리 (Firebase 연동)
+    useEffect(() => {
+        if (response?.type === "success") {
+            const { id_token } = response.params;
+            const credential = GoogleAuthProvider.credential(id_token);
+            signInWithCredential(auth, credential)
+                .then(() => {
+                    console.log("Google Sign-In success to Firebase");
+                })
+                .catch((error) => {
+                    console.error("Firebase Sign-In Error", error);
+                    Alert.alert("Login Failed", error.message || "Failed to sign in with Google.");
+                });
+        }
+    }, [response]);
 
     useEffect(() => {
         const unsub = auth.onAuthStateChanged((user) => setCurrentUser(user));
@@ -104,54 +112,7 @@ export default function CheckoutStepOneScreen() {
     }, []);
 
     const subtotal = useMemo(() => photos.length * PRICE_PER_TILE, [photos.length, locale]);
-
-    const total = useMemo(() => {
-        if (!discount) return subtotal;
-        let final = subtotal;
-        if (discount.type === "free") final = 0;
-        else if (discount.type === "amount") final = Math.max(0, subtotal - discount.value);
-        else if (discount.type === "percent") final = subtotal * (1 - discount.value / 100);
-        return final;
-    }, [subtotal, discount]);
-
-    const handleApplyPromo = async () => {
-        if (!promoCode.trim()) return;
-        if (!currentUser) {
-            Alert.alert("Please login first", "You must be logged in to use a promo code.");
-            return;
-        }
-
-        setIsApplyingPromo(true);
-        setPromoStatus("checking");
-
-        try {
-            const result = await verifyAndRedeemPromo(promoCode.trim(), currentUser.uid);
-            if (result.success && result.data) {
-                setPromoStatus("applied");
-                setDiscount({
-                    type: result.data.type,
-                    value: result.data.value,
-                    text: `${result.data.type === "free"
-                            ? "Free"
-                            : result.data.type === "percent"
-                                ? result.data.value + "%"
-                                : CURRENCY_SYMBOL + result.data.value
-                        } Off`,
-                });
-                Alert.alert("Success", "Promo code applied!");
-            } else {
-                setPromoStatus("invalid");
-                setDiscount(null);
-                Alert.alert("Invalid Code", result.error || "Code could not be applied.");
-            }
-        } catch (e) {
-            setPromoStatus("invalid");
-            setDiscount(null);
-            Alert.alert("Error", "Failed to apply promo code.");
-        } finally {
-            setIsApplyingPromo(false);
-        }
-    };
+    const total = subtotal;
 
     const handleGoogleLogin = () => {
         if (isSigningIn) return;
@@ -171,7 +132,6 @@ export default function CheckoutStepOneScreen() {
         try {
             setIsPreparing(true);
 
-            // ✅ 5000(print) 기다리지 말고 previewUri(2000대)만 기다려서 결제 화면으로 넘어간다
             const ok = await waitForPreviewUrisSnapshot(() => photosRef.current, 8000);
 
             const latest = photosRef.current || [];
@@ -201,7 +161,6 @@ export default function CheckoutStepOneScreen() {
     );
 
     const pickDisplayUri = (item: any) => {
-        // ✅ 고객앱 Checkout 미리보기: previewUri(2000대) 우선
         return item?.output?.previewUri || item?.output?.viewUri || item?.uri;
     };
 
@@ -231,6 +190,9 @@ export default function CheckoutStepOneScreen() {
                     >
                         {photos.map((item: any, idx: number) => {
                             const sourceUri = pickDisplayUri(item);
+                            // ✅ URI가 없으면 렌더링 방지 (에러 방지)
+                            if (!sourceUri) return null;
+
                             return (
                                 <TouchableOpacity key={item.assetId || idx} onPress={() => setPreviewUri(sourceUri)}>
                                     <Image source={{ uri: sourceUri }} style={styles.previewImage} />
@@ -258,42 +220,6 @@ export default function CheckoutStepOneScreen() {
                                 {(t as any)["free"] || "Free"}
                             </Text>
                         </View>
-
-                        {discount && (
-                            <View style={styles.summaryRow}>
-                                <Text style={[styles.summaryLabel, { color: "#007AFF" }]}>Discount</Text>
-                                <Text style={[styles.summaryValue, { color: "#007AFF" }]}>-{discount.text}</Text>
-                            </View>
-                        )}
-
-                        <TouchableOpacity style={styles.promoButton} onPress={() => setShowPromo(!showPromo)}>
-                            <Text style={styles.promoText}>{(t as any)["promoHaveCode"] || "Have a promo code?"}</Text>
-                            <Ionicons name={showPromo ? "chevron-up" : "chevron-down"} size={16} color="#000" />
-                        </TouchableOpacity>
-
-                        {showPromo && (
-                            <View style={styles.promoInputContainer}>
-                                <TextInput
-                                    style={styles.promoInput}
-                                    placeholder="Enter code"
-                                    value={promoCode}
-                                    onChangeText={setPromoCode}
-                                    autoCapitalize="characters"
-                                    editable={!isApplyingPromo && promoStatus !== "applied"}
-                                />
-                                <TouchableOpacity
-                                    style={[styles.applyBtn, (isApplyingPromo || promoStatus === "applied") && { opacity: 0.5 }]}
-                                    onPress={handleApplyPromo}
-                                    disabled={isApplyingPromo || promoStatus === "applied"}
-                                >
-                                    {isApplyingPromo ? (
-                                        <ActivityIndicator color="#fff" size="small" />
-                                    ) : (
-                                        <Text style={{ color: "#fff", fontWeight: "600" }}>Apply</Text>
-                                    )}
-                                </TouchableOpacity>
-                            </View>
-                        )}
 
                         <View style={styles.divider} />
                         <View style={styles.totalRow}>
@@ -384,7 +310,9 @@ const styles = StyleSheet.create({
     headerTitle: { flex: 1, textAlign: "center", fontWeight: "700", fontSize: 16 },
     content: { padding: 20 },
     stepContainer: { maxWidth: 500, alignSelf: "center", width: "100%" },
-    imageScroll: { marginBottom: 16, flexDirection: "row" },
+
+    // ✅ ScrollView horizontal은 스타일에서 flexDirection: row 불필요
+    imageScroll: { marginBottom: 16 },
     previewImage: { width: 100, height: 100, backgroundColor: "#eee", resizeMode: "cover" },
 
     summaryBlock: {
@@ -403,12 +331,6 @@ const styles = StyleSheet.create({
     summaryRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 10 },
     summaryLabel: { fontSize: 15, color: "#333" },
     summaryValue: { fontSize: 15, fontWeight: "600" },
-
-    promoButton: { flexDirection: "row", alignItems: "center", marginTop: 10 },
-    promoText: { fontWeight: "600", marginRight: 5, fontSize: 14 },
-    promoInputContainer: { marginTop: 10, flexDirection: "row", gap: 8 },
-    promoInput: { flex: 1, height: 44, borderRadius: 8, borderWidth: 1, borderColor: "#ddd", paddingHorizontal: 12, backgroundColor: "#f9fafb" },
-    applyBtn: { width: 70, height: 44, borderRadius: 8, backgroundColor: colors.ink || "#000", alignItems: "center", justifyContent: "center" },
 
     divider: { height: 1, backgroundColor: "#eee", marginVertical: 15 },
     totalRow: { flexDirection: "row", justifyContent: "space-between" },
@@ -432,5 +354,5 @@ const styles = StyleSheet.create({
     modalContainer: { flex: 1, backgroundColor: "rgba(0,0,0,0.95)", justifyContent: "center", alignItems: "center" },
     modalBackground: { ...StyleSheet.absoluteFillObject },
     modalCloseBtn: { position: "absolute", top: 60, right: 30, zIndex: 10, padding: 8, backgroundColor: "rgba(255,255,255,0.2)", borderRadius: 20 },
-    modalImage: { width: "100%", height: "80%" },
+    modalImage: { width: "100%", height: 80 + "%" },
 });

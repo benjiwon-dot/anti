@@ -134,8 +134,7 @@ export async function createDevOrder(params: {
     const customerSlug = safeCustomerFolder(shipping, authedUid);
     const storageBasePath = `orders/${dateKey}/${orderCode}/${customerSlug}`;
 
-    const previewImages: string[] = [];
-
+    // 1. 주문 기본 정보 먼저 생성 (순서 보장)
     const rawOrderData: any = {
         uid: authedUid,
         orderCode,
@@ -170,9 +169,9 @@ export async function createDevOrder(params: {
 
     await setDoc(orderRef, stripUndefined(rawOrderData));
 
-    for (let i = 0; i < photos.length; i++) {
-        const p = photos[i];
-
+    // 2. ✅ [수정] 병렬 업로드 처리 (Promise.all)
+    // 8장을 한 번에 업로드 시작하여 속도를 획기적으로 단축
+    const uploadTasks = photos.map(async (p, i) => {
         const viewUri = p?.output?.viewUri;
         if (!viewUri) throw new Error(`VIEW URI missing at index ${i}`);
 
@@ -183,10 +182,11 @@ export async function createDevOrder(params: {
         const sourcePath = `${storageBasePath}/items/${i}_source.jpg`;
         const printPath = `${storageBasePath}/items/${i}_print.jpg`;
 
-        const sourceRes = await uploadFileUriToStorage(sourcePath, sourceUri);
-        const viewRes = await uploadFileUriToStorage(viewPath, viewUri);
-
-        if (viewRes?.downloadUrl && previewImages.length < 5) previewImages.push(viewRes.downloadUrl);
+        // 3. 한 아이템 내에서도 소스/뷰 업로드를 동시에 진행
+        const [sourceRes, viewRes] = await Promise.all([
+            uploadFileUriToStorage(sourcePath, sourceUri),
+            uploadFileUriToStorage(viewPath, viewUri)
+        ]);
 
         const itemRef = doc(collection(db, "orders", orderId, "items"));
 
@@ -216,7 +216,16 @@ export async function createDevOrder(params: {
         };
 
         await setDoc(itemRef, stripUndefined(rawItemData));
-    }
+
+        // 썸네일 URL 수집 (주문 목록 표시용)
+        return viewRes.downloadUrl;
+    });
+
+    // 4. 모든 작업이 끝날 때까지 대기 (가장 느린 작업 기준 1번만 기다리면 됨)
+    const results = await Promise.all(uploadTasks);
+
+    // 유효한 URL만 필터링하여 상위 5개 저장
+    const previewImages = results.filter((url) => url !== null).slice(0, 5) as string[];
 
     if (previewImages.length > 0) {
         await updateDoc(orderRef, stripUndefined({ previewImages, updatedAt: serverTimestamp() }) as any);

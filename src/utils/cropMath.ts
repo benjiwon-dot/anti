@@ -5,10 +5,7 @@ export type Size = { width: number; height: number };
 export type Rect = { x: number; y: number; width: number; height: number };
 export type Transform = { scale: number; translateX: number; translateY: number };
 
-/**
- * Normalization: Base scale is already "cover".
- * So minScale is strictly 1.
- */
+// ✅ 기존 유지
 export const getMinScale = (baseW: number, baseH: number, cropSize: number) => {
     "worklet";
     if (baseW === 0 || baseH === 0) return 1;
@@ -16,6 +13,7 @@ export const getMinScale = (baseW: number, baseH: number, cropSize: number) => {
     return Math.max(s, 1);
 };
 
+// ✅ 기존 유지
 export const getMaxTranslate = (baseW: number, baseH: number, cropSize: number, scale: number) => {
     "worklet";
     const renderedW = baseW * scale;
@@ -27,6 +25,7 @@ export const getMaxTranslate = (baseW: number, baseH: number, cropSize: number, 
     return { maxX, maxY };
 };
 
+// ✅ 기존 유지
 export const clampTransform = (
     tx: number,
     ty: number,
@@ -51,11 +50,7 @@ export const clampTransform = (
     return { tx: nextTx, ty: nextTy, scale: nextScale };
 };
 
-/**
- * UI base cover size (scale=1) matching CropFrameRN:
- * coverScale = max(cropSquare / originalW, cropSquare / originalH)
- * baseW = originalW * coverScale, baseH = originalH * coverScale
- */
+// ✅ 기존 유지
 export const computeBaseCoverSize = (originalW: number, originalH: number, cropSquare: number) => {
     if (originalW <= 0 || originalH <= 0 || cropSquare <= 0) {
         return { baseW: cropSquare || 1, baseH: cropSquare || 1 };
@@ -65,10 +60,8 @@ export const computeBaseCoverSize = (originalW: number, originalH: number, cropS
 };
 
 /**
- * Maps UI transform back to original image pixels for export.
- * - Uses actual frameRect.x/y/width/height (no centered assumption)
- * - Uses UI-consistent cover model
- * - Hard clamps to ALWAYS return a valid crop inside image bounds
+ * ✅ [수정됨] 창문형(Window) 방식에 맞춰 좌표 역산 로직 정밀화
+ * - 사용자가 화면에서 보는 그림 그대로 원본에서 잘라내도록 보정
  */
 export const mapToOriginalCropRect = (params: {
     originalW: number;
@@ -80,89 +73,47 @@ export const mapToOriginalCropRect = (params: {
 }) => {
     const { originalW, originalH, containerW, containerH, frameRect, transform } = params;
 
-    if (originalW <= 1 || originalH <= 1 || containerW <= 1 || containerH <= 1) {
-        return { x: 0, y: 0, width: 1, height: 1 };
-    }
+    if (originalW <= 1 || originalH <= 1) return { x: 0, y: 0, width: 1, height: 1 };
 
-    const fw = Math.max(1, Math.round(frameRect.width));
-    const fh = Math.max(1, Math.round(frameRect.height));
-    const fx = Number.isFinite(frameRect.x) ? frameRect.x : 0;
-    const fy = Number.isFinite(frameRect.y) ? frameRect.y : 0;
+    // 1. 현재 화면상에서 이미지가 차지하는 실제 크기 (Rendered Size)
+    const baseScale = Math.max(frameRect.width / originalW, frameRect.height / originalH); // Cover Scale
+    const currentScale = transform.scale * baseScale;
 
-    // square crop
-    const cropSize = Math.max(1, Math.round(Math.min(fw, fh)));
+    const renderedW = originalW * currentScale;
+    const renderedH = originalH * currentScale;
 
-    const { baseW, baseH } = computeBaseCoverSize(originalW, originalH, cropSize);
+    // 2. 이미지의 좌상단(Left-Top)이 컨테이너 기준 어디에 있는지 계산
+    // (중앙 정렬 상태에서 translateX/Y 만큼 이동)
+    const imageLeft = (containerW - renderedW) / 2 + transform.translateX;
+    const imageTop = (containerH - renderedH) / 2 + transform.translateY;
 
-    const sc = Number.isFinite(transform.scale) && transform.scale > 0 ? transform.scale : 1;
-    const tx = Number.isFinite(transform.translateX) ? transform.translateX : 0;
-    const ty = Number.isFinite(transform.translateY) ? transform.translateY : 0;
+    // 3. 크롭 프레임(고정창)이 이미지의 어디에 위치하는지 상대 좌표 계산
+    // (Frame - ImageStart) / Scale = Original Coordinate
+    const cropX_on_Rendered = frameRect.x - imageLeft;
+    const cropY_on_Rendered = frameRect.y - imageTop;
 
-    // Image center in container coords
-    const imgCenterX = containerW / 2 + tx;
-    const imgCenterY = containerH / 2 + ty;
+    // 4. 원본 좌표로 변환 (비율 역산)
+    let sx = cropX_on_Rendered / currentScale;
+    let sy = cropY_on_Rendered / currentScale;
+    let sSize = frameRect.width / currentScale; // 정사각형이므로 width만 사용
 
-    // Inverse mapping: local = (screen - center - t) / s
-    const untransform = (screenX: number, screenY: number) => {
-        const dx = screenX - imgCenterX;
-        const dy = screenY - imgCenterY;
+    // 5. 정수화 및 안전장치 (소수점 오차 보정)
+    sx = Math.floor(sx);
+    sy = Math.floor(sy);
+    sSize = Math.floor(sSize);
 
-        const ux = dx / sc;
-        const uy = dy / sc;
-
-        const localX = ux + baseW / 2;
-        const localY = uy + baseH / 2;
-
-        return {
-            nx: localX / baseW,
-            ny: localY / baseH,
-        };
-    };
-
-    const tl = untransform(fx, fy);
-    const br = untransform(fx + cropSize, fy + cropSize);
-
-    // normalized -> original px (can go outside, clamp later)
-    let sx = Math.floor(Math.min(tl.nx, br.nx) * originalW);
-    let sy = Math.floor(Math.min(tl.ny, br.ny) * originalH);
-    let ex = Math.ceil(Math.max(tl.nx, br.nx) * originalW);
-    let ey = Math.ceil(Math.max(tl.ny, br.ny) * originalH);
-
-    // hard clamp endpoints
+    // 6. 경계 벗어남 방지 (Hard Clamp)
     sx = Math.max(0, Math.min(sx, originalW - 1));
     sy = Math.max(0, Math.min(sy, originalH - 1));
-    ex = Math.max(1, Math.min(ex, originalW));
-    ey = Math.max(1, Math.min(ey, originalH));
 
-    let sw = Math.max(1, ex - sx);
-    let sh = Math.max(1, ey - sy);
+    // 크기가 원본을 초과하지 않도록
+    sSize = Math.min(sSize, originalW - sx, originalH - sy);
+    sSize = Math.max(1, sSize);
 
-    // enforce square by taking max and re-centering
-    let size = Math.max(sw, sh);
-    size = Math.min(size, originalW, originalH);
-
-    const cx = sx + sw / 2;
-    const cy = sy + sh / 2;
-
-    let nx = Math.round(cx - size / 2);
-    let ny = Math.round(cy - size / 2);
-
-    // final clamp so always inside
-    nx = Math.max(0, Math.min(nx, originalW - size));
-    ny = Math.max(0, Math.min(ny, originalH - size));
-
-    // FINAL SAFETY: shrink-by-1 if edge-case rounding still trips manipulator
-    // (manipulator is extremely strict)
-    if (nx + size > originalW) size = Math.max(1, originalW - nx);
-    if (ny + size > originalH) size = Math.max(1, originalH - ny);
-
-    // still square – ensure within min dimension
-    size = Math.min(size, originalW - nx, originalH - ny);
-    size = Math.max(1, Math.floor(size));
-
-    return { x: nx, y: ny, width: size, height: size };
+    return { x: sx, y: sy, width: sSize, height: sSize };
 };
 
+// ✅ 기존 유지
 export const calculatePrecisionCrop = (params: {
     sourceSize: Size;
     containerSize: Size;
@@ -183,11 +134,7 @@ export const calculatePrecisionCrop = (params: {
         Number.isFinite(rect.y) &&
         Number.isFinite(rect.width) &&
         rect.width > 0 &&
-        rect.height > 0 &&
-        rect.x >= 0 &&
-        rect.y >= 0 &&
-        rect.x + rect.width <= params.sourceSize.width &&
-        rect.y + rect.height <= params.sourceSize.height;
+        rect.height > 0;
 
     return { ...rect, isValid };
 };

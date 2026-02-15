@@ -1,14 +1,31 @@
 import * as admin from "firebase-admin";
-import { onDocumentCreated } from "firebase-functions/v2/firestore";
+
+// ✅ Gen2 (v2) imports
 import { setGlobalOptions } from "firebase-functions/v2";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
+import { onDocumentCreated } from "firebase-functions/v2/firestore";
+import { onObjectFinalized } from "firebase-functions/v2/storage";
+
+// ✅ Firebase Admin SDK imports
 import { getStorage } from "firebase-admin/storage";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
+
+// ✅ External Libraries
 import sharp from "sharp";
 const archiver = require("archiver");
+
+// ✅ Initialize Firebase Admin
 admin.initializeApp();
 
+// ✅ Firestore 설정
+getFirestore().settings({ ignoreUndefinedProperties: true });
+
+// ✅ Gen2 기본 전역 설정 (Region 설정)
 setGlobalOptions({ region: "us-central1" });
+
+/* =========================================================================
+   HELPER FUNCTIONS
+   ========================================================================= */
 
 type ColorMatrix = number[]; // length 20
 
@@ -16,9 +33,6 @@ function clamp255(v: number) {
     return Math.max(0, Math.min(255, v));
 }
 
-/**
- * Apply 4x5 color matrix to RGBA buffer (CPU).
- */
 async function applyColorMatrixRGBA(input: Buffer, matrix: ColorMatrix): Promise<Buffer> {
     const { data, info } = await sharp(input).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
     const out = Buffer.alloc(data.length);
@@ -40,14 +54,11 @@ async function applyColorMatrixRGBA(input: Buffer, matrix: ColorMatrix): Promise
         out[i + 3] = clamp255(na);
     }
 
-    return await sharp(out, { raw: { width: info.width, height: info.height, channels: 4 } })
+    return await sharp(out, { raw: { width: info.width!, height: info.height!, channels: 4 } })
         .jpeg({ quality: 92 })
         .toBuffer();
 }
 
-/**
- * Convert hex "#RRGGBB" or "#RRGGBBAA" to RGBA + alpha (0..1).
- */
 function parseHexColor(hex?: string): { r: number; g: number; b: number; a: number } | null {
     if (!hex || typeof hex !== "string") return null;
     const s = hex.trim();
@@ -69,9 +80,35 @@ function safeNum(n: any, fallback = 0) {
     return typeof n === "number" && Number.isFinite(n) ? n : fallback;
 }
 
-/**
- * Clamp crop rect to source image bounds (prevents sharp extract crash).
- */
+function safeFolderName(s: any) {
+    return (
+        String(s || "")
+            .trim()
+            .replace(/[\/\\:*?"<>|]/g, "_")
+            .replace(/\s+/g, " ")
+            .slice(0, 60) || "Guest"
+    );
+}
+
+function toYYYYMMDD(ts: any) {
+    const d =
+        ts?.toDate
+            ? ts.toDate()
+            : ts instanceof Date
+                ? ts
+                : typeof ts === "string"
+                    ? new Date(ts)
+                    : typeof ts === "number"
+                        ? new Date(ts)
+                        : null;
+
+    if (!d || Number.isNaN(d.getTime())) return "unknown_date";
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}${m}${day}`;
+}
+
 async function clampCropToImage(
     sourceBuf: Buffer,
     cropPx: { x: number; y: number; width: number; height: number }
@@ -102,258 +139,244 @@ async function clampCropToImage(
     return { left, top, width, height };
 }
 
-/**
- * ✅ (NEW) Reserve sequential orderCode by date using Firestore transaction
- * Returns: { orderCode, dateKey, seq }
- *
- * Firestore doc:
- *   orderCounters/{YYYYMMDD}  { nextSeq: number, updatedAt }
- *
- * Logic:
- *   seq = nextSeq (default 1)
- *   nextSeq = seq + 1
- *   orderCode = YYYYMMDD-#### (pad 4)
- */
-export const reserveOrderCode = onCall(
-    {
-        region: "us-central1",
-        cors: true,
-    },
-    async (req) => {
-        // ✅ require auth
-        if (!req.auth?.uid) {
-            throw new HttpsError("unauthenticated", "Must be signed in.");
-        }
-
-        const dateKey = String(req.data?.dateKey || "").trim();
-
-        if (!/^\d{8}$/.test(dateKey)) {
-            throw new HttpsError("invalid-argument", "dateKey must be YYYYMMDD.");
-        }
-
-        const db = getFirestore();
-        const ref = db.collection("orderCounters").doc(dateKey);
-
-        const result = await db.runTransaction(async (tx) => {
-            const snap = await tx.get(ref);
-            const nextSeq = snap.exists ? Number(snap.data()?.nextSeq || 1) : 1;
-
-            const seq = Number.isFinite(nextSeq) && nextSeq >= 1 ? nextSeq : 1;
-            tx.set(
-                ref,
-                { nextSeq: seq + 1, updatedAt: FieldValue.serverTimestamp() },
-                { merge: true }
-            );
-
-            const orderCode = `${dateKey}-${String(seq).padStart(4, "0")}`;
-            return { orderCode, dateKey, seq };
-        });
-
-        return result;
-    });
+/* =========================================================================
+   CLOUD FUNCTIONS (GEN 2)
+   ========================================================================= */
 
 /**
- * ✅ buildPrint5000 (너가 올린 코드 기반)
+ * ✅ Reserve sequential orderCode
  */
-export const buildPrint5000OnItemCreated = onDocumentCreated("orders/{orderId}/items/{itemId}", async (event) => {
-    const snap = event.data;
-    if (!snap) return;
+export const reserveOrderCode = onCall({ region: "us-central1", cors: true }, async (req) => {
+    if (!req.auth?.uid) throw new HttpsError("unauthenticated", "Must be signed in.");
+
+    const dateKey = String(req.data?.dateKey || "").trim();
+    if (!/^\d{8}$/.test(dateKey)) throw new HttpsError("invalid-argument", "dateKey must be YYYYMMDD.");
 
     const db = getFirestore();
-    const bucket = getStorage().bucket();
+    const ref = db.collection("orderCounters").doc(dateKey);
 
-    const { orderId, itemId } = event.params as any;
+    const result = await db.runTransaction(async (tx) => {
+        const snap = await tx.get(ref);
+        const nextSeq = snap.exists ? Number(snap.data()?.nextSeq || 1) : 1;
 
-    const item = snap.data() as any;
-    const index = item?.index ?? 0;
+        const seq = Number.isFinite(nextSeq) && nextSeq >= 1 ? nextSeq : 1;
+        tx.set(ref, { nextSeq: seq + 1, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
 
-    const sourcePath: string | undefined = item?.assets?.sourcePath;
+        const orderCode = `${dateKey}-${String(seq).padStart(4, "0")}`;
+        return { orderCode, dateKey, seq };
+    });
 
-    const cropPx =
-        item?.cropPx ||
-        item?.edits?.committed?.cropPx ||
-        null;
-
-    const matrix: ColorMatrix | null = item?.filterParams?.matrix ?? null;
-
-    const overlayColorHex: string | undefined =
-        item?.filterParams?.overlayColor ?? item?.overlayColor;
-
-    const overlayOpacityRaw: number | undefined =
-        item?.filterParams?.overlayOpacity ?? item?.overlayOpacity;
-
-    if (item?.assets?.printUrl) return;
-
-    if (!sourcePath) {
-        console.warn("[Print5000] missing sourcePath", { orderId, itemId, index });
-        return;
-    }
-
-    try {
-        const sourceFile = bucket.file(sourcePath);
-        const [sourceBuf] = await sourceFile.download();
-
-        let pipeline = sharp(sourceBuf).rotate();
-
-        if (
-            cropPx &&
-            Number.isFinite(cropPx.x) &&
-            Number.isFinite(cropPx.y) &&
-            Number.isFinite(cropPx.width) &&
-            Number.isFinite(cropPx.height)
-        ) {
-            const rect = await clampCropToImage(sourceBuf, cropPx);
-            pipeline = pipeline.extract(rect);
-        }
-
-        let buf = await pipeline
-            .resize(5000, 5000, { fit: "cover" })
-            .jpeg({ quality: 92 })
-            .toBuffer();
-
-        if (matrix && Array.isArray(matrix) && matrix.length === 20) {
-            buf = await applyColorMatrixRGBA(buf, matrix);
-        }
-
-        const overlay = parseHexColor(overlayColorHex);
-        const overlayOpacity =
-            typeof overlayOpacityRaw === "number" && Number.isFinite(overlayOpacityRaw)
-                ? Math.max(0, Math.min(1, overlayOpacityRaw))
-                : 0;
-
-        if (overlay && overlayOpacity > 0) {
-            const alpha = overlayOpacity * overlay.a;
-
-            const overlayPng = await sharp({
-                create: {
-                    width: 5000,
-                    height: 5000,
-                    channels: 4,
-                    background: { r: overlay.r, g: overlay.g, b: overlay.b, alpha },
-                },
-            })
-                .png()
-                .toBuffer();
-
-            buf = await sharp(buf)
-                .composite([{ input: overlayPng, blend: "over" }])
-                .jpeg({ quality: 92 })
-                .toBuffer();
-        }
-
-        const orderRef = db.collection("orders").doc(orderId);
-        const orderSnap = await orderRef.get();
-        const storageBasePath = orderSnap.data()?.storageBasePath;
-
-        if (!storageBasePath) {
-            console.warn("[Print5000] missing storageBasePath", { orderId, itemId });
-            return;
-        }
-
-        const printPath = `${storageBasePath}/items/${index}_print.jpg`;
-
-        const printFile = bucket.file(printPath);
-        await printFile.save(buf, { contentType: "image/jpeg", resumable: false });
-
-        let printUrl: string | null = null;
-        try {
-            const [url] = await printFile.getSignedUrl({
-                action: "read",
-                expires: Date.now() + 1000 * 60 * 60 * 24 * 365,
-            });
-            printUrl = url;
-        } catch (e) {
-            console.warn("[Print5000] getSignedUrl failed (printPath saved only)", { orderId, itemId, printPath }, e);
-        }
-
-        await snap.ref.update({
-            "assets.printPath": printPath,
-            "assets.printUrl": printUrl,
-            printUrl,
-        });
-
-        console.log("[Print5000] generated", {
-            orderId,
-            itemId,
-            index,
-            sourcePath,
-            printPath,
-            signedUrl: !!printUrl,
-        });
-    } catch (err) {
-        console.error("[Print5000] failed", { orderId, itemId, index, sourcePath }, err);
-    }
+    return result;
 });
 
 /**
- * ✅ (NEW) Admin: Batch Update Status
- * Input: { orderIds: string[], status: OrderStatus }
+ * ✅ buildPrint5000 (on item created)
  */
-export const adminBatchUpdateStatus = onCall(
-    { region: "us-central1", cors: true },
-    async (req) => {
-        if (!req.auth?.uid || req.auth.token.isAdmin !== true) {
-            throw new HttpsError("permission-denied", "Admin only.");
-        }
-
-        const { orderIds, status } = req.data;
-        if (!Array.isArray(orderIds) || orderIds.length === 0 || orderIds.length > 200) {
-            throw new HttpsError("invalid-argument", "orderIds must be 1..200.");
-        }
-        if (!status) {
-            throw new HttpsError("invalid-argument", "status required.");
-        }
+export const buildPrint5000OnItemCreated = onDocumentCreated(
+    {
+        document: "orders/{orderId}/items/{itemId}",
+        region: "us-central1",
+        memory: "2GiB",      // ✅ 중요: 5000px 이미지 처리를 위해 메모리 2GB 할당
+        timeoutSeconds: 300, // ✅ 중요: 처리 시간 최대 5분으로 연장
+        cpu: 1               // Gen2에서 메모리 증가 시 명시 권장
+    },
+    async (event) => {
+        const snap = event.data;
+        if (!snap) return;
 
         const db = getFirestore();
-        const batch = db.batch();
-        const timestamp = FieldValue.serverTimestamp();
-        let count = 0;
+        const bucket = getStorage().bucket();
 
-        for (const orderId of orderIds) {
-            const ref = db.collection("orders").doc(orderId);
-            batch.update(ref, {
-                status,
-                updatedAt: timestamp,
-                statusUpdatedAt: timestamp, // track last status change
-            });
+        const { orderId, itemId } = event.params as any;
 
-            // Log event
-            const eventRef = ref.collection("events").doc();
-            batch.set(eventRef, {
-                type: "STATUS_CHANGED",
-                to: status,
-                byUid: req.auth.uid,
-                byEmail: req.auth.token.email || "unknown",
-                createdAt: timestamp,
-            });
-            count++;
+        const item = snap.data() as any;
+        const index = item?.index ?? 0;
+
+        const sourcePath: string | undefined = item?.assets?.sourcePath;
+        const cropPx = item?.cropPx || item?.edits?.committed?.cropPx || null;
+        const matrix: ColorMatrix | null = item?.filterParams?.matrix ?? null;
+
+        const overlayColorHex: string | undefined = item?.filterParams?.overlayColor ?? item?.overlayColor;
+        const overlayOpacityRaw: number | undefined = item?.filterParams?.overlayOpacity ?? item?.overlayOpacity;
+
+        if (item?.assets?.printUrl) return;
+
+        if (!sourcePath) {
+            console.warn("[Print5000] missing sourcePath", { orderId, itemId, index });
+            return;
         }
 
-        await batch.commit();
-        return { ok: true, updatedCount: count };
+        try {
+            const sourceFile = bucket.file(sourcePath);
+            const [sourceBuf] = await sourceFile.download();
+
+            let pipeline = sharp(sourceBuf).rotate();
+
+            if (
+                cropPx &&
+                Number.isFinite(cropPx.x) &&
+                Number.isFinite(cropPx.y) &&
+                Number.isFinite(cropPx.width) &&
+                Number.isFinite(cropPx.height)
+            ) {
+                const rect = await clampCropToImage(sourceBuf, cropPx);
+                pipeline = pipeline.extract(rect);
+            }
+
+            let buf = await pipeline.resize(5000, 5000, { fit: "cover" }).jpeg({ quality: 92 }).toBuffer();
+
+            if (matrix && Array.isArray(matrix) && matrix.length === 20) {
+                buf = await applyColorMatrixRGBA(buf, matrix);
+            }
+
+            const overlay = parseHexColor(overlayColorHex);
+            const overlayOpacity =
+                typeof overlayOpacityRaw === "number" && Number.isFinite(overlayOpacityRaw)
+                    ? Math.max(0, Math.min(1, overlayOpacityRaw))
+                    : 0;
+
+            if (overlay && overlayOpacity > 0) {
+                const alpha = overlayOpacity * overlay.a;
+
+                const overlayPng = await sharp({
+                    create: {
+                        width: 5000,
+                        height: 5000,
+                        channels: 4,
+                        background: { r: overlay.r, g: overlay.g, b: overlay.b, alpha },
+                    },
+                })
+                    .png()
+                    .toBuffer();
+
+                buf = await sharp(buf).composite([{ input: overlayPng, blend: "over" }]).jpeg({ quality: 92 }).toBuffer();
+            }
+
+            const orderRef = db.collection("orders").doc(orderId);
+            const orderSnap = await orderRef.get();
+            const storageBasePath = orderSnap.data()?.storageBasePath;
+
+            if (!storageBasePath) {
+                console.warn("[Print5000] missing storageBasePath", { orderId, itemId });
+                return;
+            }
+
+            const printPath = `${storageBasePath}/items/${index}_print.jpg`;
+
+            const printFile = bucket.file(printPath);
+            await printFile.save(buf, { contentType: "image/jpeg", resumable: false });
+
+            let printUrl: string | null = null;
+            try {
+                const [url] = await printFile.getSignedUrl({
+                    action: "read",
+                    expires: Date.now() + 1000 * 60 * 60 * 24 * 365,
+                    responseDisposition: `inline; filename="${String(orderId).slice(0, 8)}_${index + 1}_print.jpg"`,
+                    responseType: "image/jpeg",
+                });
+                printUrl = url;
+            } catch (e) {
+                console.warn("[Print5000] getSignedUrl failed (printPath saved only)", { orderId, itemId, printPath }, e);
+            }
+
+            await snap.ref.update({
+                "assets.printPath": printPath,
+                "assets.printUrl": printUrl,
+                printUrl,
+            });
+
+            console.log("[Print5000] generated", { orderId, itemId, index, sourcePath, printPath, signedUrl: !!printUrl });
+        } catch (err) {
+            console.error("[Print5000] failed", { orderId, itemId, index, sourcePath }, err);
+        }
+    }
+);
+/**
+ * ✅ Admin: Batch Update Status
+ * - cors: true (모든 출처 허용하여 CORS 에러 해결)
+ */
+export const adminBatchUpdateStatus = onCall(
+    {
+        region: "us-central1",
+        cors: true, // ✨ [핵심] CORS 해결: 모든 출처 허용
+        timeoutSeconds: 60
+    },
+    async (req) => {
+        console.log(`[BatchUpdate] Request by UID: ${req.auth?.uid}, isAdmin: ${req.auth?.token?.isAdmin}`);
+
+        try {
+            if (!req.auth?.uid || req.auth.token.isAdmin !== true) {
+                console.warn("[BatchUpdate] Permission Denied");
+                throw new HttpsError("permission-denied", "Admin only. Please Logout & Login again.");
+            }
+
+            const { orderIds, status } = (req.data || {}) as any;
+
+            if (!Array.isArray(orderIds) || orderIds.length === 0) {
+                throw new HttpsError("invalid-argument", "No orderIds provided.");
+            }
+            if (!status) {
+                throw new HttpsError("invalid-argument", "Status is required.");
+            }
+
+            const db = getFirestore();
+            const batch = db.batch();
+            const timestamp = FieldValue.serverTimestamp();
+
+            console.log(`[BatchUpdate] Target: ${orderIds.length} orders -> ${status}`);
+
+            for (const orderId of orderIds) {
+                if (!orderId) continue;
+                const ref = db.collection("orders").doc(String(orderId));
+
+                batch.set(ref, {
+                    status,
+                    updatedAt: timestamp,
+                    statusUpdatedAt: timestamp,
+                }, { merge: true });
+
+                const eventRef = ref.collection("events").doc();
+                batch.set(eventRef, {
+                    type: "STATUS_CHANGED",
+                    to: status,
+                    byUid: req.auth.uid,
+                    byEmail: req.auth.token.email || "unknown",
+                    createdAt: timestamp,
+                });
+            }
+
+            await batch.commit();
+            console.log("[BatchUpdate] Successfully committed.");
+
+            return { ok: true, updatedCount: orderIds.length };
+
+        } catch (e: any) {
+            console.error("[BatchUpdate] CRITICAL ERROR:", e);
+            if (e instanceof HttpsError) throw e;
+            throw new HttpsError("internal", `Server Error: ${e?.message || "Unknown"}`);
+        }
     }
 );
 
 /**
- * ✅ (NEW) Admin: Update Order Ops (Single)
- * Input: { orderId, status?, trackingNumber?, adminNote? }
+ * ✅ Admin: Update Order Ops
+ * - cors: true
  */
-export const adminUpdateOrderOps = onCall(
-    { region: "us-central1", cors: true },
-    async (req) => {
+export const adminUpdateOrderOps = onCall({ region: "us-central1", cors: true }, async (req) => {
+    try {
         if (!req.auth?.uid || req.auth.token.isAdmin !== true) {
             throw new HttpsError("permission-denied", "Admin only.");
         }
 
-        const { orderId, status, trackingNumber, adminNote } = req.data;
+        const { orderId, status, trackingNumber, adminNote } = req.data || {};
         if (!orderId) throw new HttpsError("invalid-argument", "orderId required.");
 
         const db = getFirestore();
-        const ref = db.collection("orders").doc(orderId);
+        const ref = db.collection("orders").doc(String(orderId));
         const timestamp = FieldValue.serverTimestamp();
-        const updates: any = { updatedAt: timestamp };
 
-        if (status) {
+        const updates: any = { updatedAt: timestamp };
+        if (status !== undefined) {
             updates.status = status;
             updates.statusUpdatedAt = timestamp;
         }
@@ -362,9 +385,7 @@ export const adminUpdateOrderOps = onCall(
 
         await ref.update(updates);
 
-        // Log event
-        const eventRef = ref.collection("events").doc();
-        await eventRef.set({
+        await ref.collection("events").doc().set({
             type: status ? "STATUS_CHANGED" : "OPS_UPDATE",
             to: status || undefined,
             changes: { trackingNumber, adminNote },
@@ -374,23 +395,27 @@ export const adminUpdateOrderOps = onCall(
         });
 
         return { ok: true };
+    } catch (e: any) {
+        console.error("[adminUpdateOrderOps] failed", e);
+        if (e instanceof HttpsError) throw e;
+        throw new HttpsError("internal", e?.message || "Update ops failed");
     }
-);
+});
 
 /**
- * ✅ (NEW) Admin: Cancel Order
+ * ✅ Admin: Cancel Order (CORS 해결)
+ * - cors: true 설정됨
  */
-export const adminCancelOrder = onCall(
-    { region: "us-central1", cors: true },
-    async (req) => {
+export const adminCancelOrder = onCall({ region: "us-central1", cors: true }, async (req) => {
+    try {
         if (!req.auth?.uid || req.auth.token.isAdmin !== true) {
             throw new HttpsError("permission-denied", "Admin only.");
         }
-        const { orderId, reason } = req.data;
+        const { orderId, reason } = req.data || {};
         if (!orderId) throw new HttpsError("invalid-argument", "orderId required.");
 
         const db = getFirestore();
-        const ref = db.collection("orders").doc(orderId);
+        const ref = db.collection("orders").doc(String(orderId));
         const timestamp = FieldValue.serverTimestamp();
 
         await ref.update({
@@ -409,24 +434,26 @@ export const adminCancelOrder = onCall(
         });
 
         return { ok: true };
+    } catch (e: any) {
+        console.error("[adminCancelOrder] failed", e);
+        if (e instanceof HttpsError) throw e;
+        throw new HttpsError("internal", e?.message || "Cancel failed");
     }
-);
+});
 
 /**
- * ✅ (NEW) Admin: Refund Order
- * Note: Just updates status, DOES NOT process actual payment refund.
+ * ✅ Admin: Refund Order
  */
-export const adminRefundOrder = onCall(
-    { region: "us-central1", cors: true },
-    async (req) => {
+export const adminRefundOrder = onCall({ region: "us-central1", cors: true }, async (req) => {
+    try {
         if (!req.auth?.uid || req.auth.token.isAdmin !== true) {
             throw new HttpsError("permission-denied", "Admin only.");
         }
-        const { orderId, reason } = req.data;
+        const { orderId, reason } = req.data || {};
         if (!orderId) throw new HttpsError("invalid-argument", "orderId required.");
 
         const db = getFirestore();
-        const ref = db.collection("orders").doc(orderId);
+        const ref = db.collection("orders").doc(String(orderId));
         const timestamp = FieldValue.serverTimestamp();
 
         await ref.update({
@@ -445,157 +472,282 @@ export const adminRefundOrder = onCall(
         });
 
         return { ok: true };
+    } catch (e: any) {
+        console.error("[adminRefundOrder] failed", e);
+        if (e instanceof HttpsError) throw e;
+        throw new HttpsError("internal", e?.message || "Refund failed");
     }
-);
+});
 
 /**
- * ✅ (NEW) Admin: Export ZIP
- * Compresses print assets (or preview) for selected orders into a ZIP.
- * Input: { orderIds: string[], type: "print" | "preview" }
+ * ✅ Admin: Export Printer JSON (CORS 해결)
+ * - cors: true 설정됨
  */
-export const adminExportZipPrints = onCall(
-    { region: "us-central1", cors: true, memory: "1GiB", timeoutSeconds: 300 },
+export const adminExportPrinterJSON = onCall(
+    { region: "us-central1", cors: true, timeoutSeconds: 120, memory: "512MiB" },
     async (req) => {
-        if (!req.auth?.uid || req.auth.token.isAdmin !== true) {
-            throw new HttpsError("permission-denied", "Admin only.");
-        }
+        try {
+            if (!req.auth?.uid || req.auth.token.isAdmin !== true) {
+                throw new HttpsError("permission-denied", "Admin only.");
+            }
 
-        const { orderIds, type = "print" } = req.data;
-        if (!Array.isArray(orderIds) || orderIds.length === 0) {
-            throw new HttpsError("invalid-argument", "orderIds required.");
-        }
-        if (orderIds.length > 200) {
-            throw new HttpsError("invalid-argument", "orderIds max 200.");
-        }
+            const { orderIds } = (req.data || {}) as any;
+            if (!Array.isArray(orderIds) || orderIds.length === 0) {
+                throw new HttpsError("invalid-argument", "orderIds required.");
+            }
+            if (orderIds.length > 200) {
+                throw new HttpsError("invalid-argument", "orderIds max 200.");
+            }
 
-        const db = getFirestore();
-        const bucket = getStorage().bucket();
+            const db = getFirestore();
+            const bucket = getStorage().bucket();
+            const payload: any[] = [];
 
-        // ✅ file name in storage
-        const zipName = `exports/zip/${type}_${orderIds.length}orders_${Date.now()}.zip`;
-        const zipFile = bucket.file(zipName);
+            for (const orderId of orderIds) {
+                const orderSnap = await db.collection("orders").doc(String(orderId)).get();
+                if (!orderSnap.exists) continue;
 
-        const archive = archiver("zip", { zlib: { level: 9 } });
-        const stream = zipFile.createWriteStream({ contentType: "application/zip" });
+                const orderData: any = orderSnap.data() || {};
+                const orderCode = orderData?.orderCode || orderId;
+                const dateKey = toYYYYMMDD(orderData?.createdAt);
 
-        const safeFolder = (s: any) =>
-            String(s || "")
-                .trim()
-                .replace(/[\/\\:*?"<>|]/g, "_")
-                .replace(/\s+/g, " ")
-                .slice(0, 60) || "Guest";
+                const shipping = orderData?.shipping || {};
+                const customer = orderData?.customer || {};
 
-        const yyyymmdd = (ts: any) => {
-            const d =
-                ts?.toDate ? ts.toDate() :
-                    ts instanceof Date ? ts :
-                        typeof ts === "string" ? new Date(ts) :
-                            typeof ts === "number" ? new Date(ts) :
-                                null;
+                const itemsSnap = await orderSnap.ref.collection("items").orderBy("index").get();
+                const items = itemsSnap.empty ? orderData?.items || [] : itemsSnap.docs.map((d) => d.data());
 
-            if (!d || Number.isNaN(d.getTime())) return "unknown_date";
-            const y = d.getFullYear();
-            const m = String(d.getMonth() + 1).padStart(2, "0");
-            const day = String(d.getDate()).padStart(2, "0");
-            return `${y}${m}${day}`;
-        };
+                const normalizedItems = (items || []).map((it: any) => {
+                    const index = Number.isFinite(it?.index) ? Number(it.index) : 0;
+                    const printPath = it?.assets?.printPath || it?.printPath || it?.printStoragePath || null;
+                    const previewPath = it?.assets?.previewPath || it?.previewPath || it?.storagePath || null;
 
-        return new Promise((resolve, reject) => {
-            stream.on("finish", async () => {
-                try {
-                    const [url] = await zipFile.getSignedUrl({
-                        action: "read",
-                        expires: Date.now() + 1000 * 60 * 60, // 1 hour
-                    });
-                    resolve({ ok: true, url });
-                } catch (e) {
-                    reject(e);
-                }
+                    return {
+                        index,
+                        size: it?.size || "20x20",
+                        quantity: it?.quantity || 1,
+                        filterId: it?.filterId || "original",
+                        cropPx: it?.cropPx || it?.crop || it?.edits?.committed?.cropPx || null,
+                        assets: { printPath, previewPath },
+                    };
+                });
+
+                payload.push({
+                    orderId,
+                    orderCode,
+                    dateKey,
+                    customer: {
+                        fullName: customer?.fullName || customer?.name || shipping?.fullName || "Guest",
+                        email: customer?.email || shipping?.email || "",
+                        phone: customer?.phone || shipping?.phone || "",
+                    },
+                    shipping: {
+                        fullName: shipping?.fullName || "",
+                        address1: shipping?.address1 || "",
+                        address2: shipping?.address2 || "",
+                        city: shipping?.city || "",
+                        state: shipping?.state || "",
+                        postalCode: shipping?.postalCode || "",
+                        country: shipping?.country || "",
+                        phone: shipping?.phone || "",
+                    },
+                    pricing:
+                        orderData?.pricing || {
+                            subtotal: orderData?.subtotal || 0,
+                            shippingFee: orderData?.shippingFee || 0,
+                            discount: orderData?.discount || 0,
+                            total: orderData?.total || 0,
+                        },
+                    items: normalizedItems,
+                    notes: { storageBasePath: orderData?.storageBasePath || "" },
+                });
+            }
+
+            const jsonText = JSON.stringify({ generatedAt: new Date().toISOString(), count: payload.length, orders: payload }, null, 2);
+
+            const jsonName = `exports/json/printer_${orderIds.length}orders_${Date.now()}.json`;
+            const file = bucket.file(jsonName);
+
+            await file.save(Buffer.from(jsonText, "utf8"), {
+                contentType: "application/json; charset=utf-8",
+                resumable: false,
             });
 
-            stream.on("error", reject);
-            archive.on("error", (err: any) => reject(err));
-            archive.pipe(stream);
+            const filename = `memotile_printer_${Date.now()}.json`;
+            const [url] = await file.getSignedUrl({
+                action: "read",
+                expires: Date.now() + 1000 * 60 * 60,
+                responseDisposition: `attachment; filename="${filename}"`,
+                responseType: "application/json",
+            });
 
-            // Process strictly sequentially to avoid memory spikes
-            (async () => {
-                for (const orderId of orderIds) {
-                    const orderSnap = await db.collection("orders").doc(orderId).get();
-                    if (!orderSnap.exists) continue;
-
-                    const orderData: any = orderSnap.data() || {};
-                    const orderCode = orderData?.orderCode || orderId;
-
-                    const dateKey = yyyymmdd(orderData?.createdAt);
-
-                    const customerName = safeFolder(
-                        orderData?.customer?.fullName ||
-                        orderData?.customer?.name ||
-                        orderData?.shipping?.fullName ||
-                        "Guest"
-                    );
-
-                    // ✅ desired folder structure
-                    // YYYYMMDD/customer/이름/ORDER_CODE/01.jpg ...
-                    const baseFolder = `${dateKey}/customer/${customerName}/${orderCode}`;
-
-                    // Fetch items (prefer subcollection)
-                    const itemsSnap = await orderSnap.ref.collection("items").orderBy("index").get();
-                    const items = itemsSnap.empty ? (orderData?.items || []) : itemsSnap.docs.map((d) => d.data());
-
-                    for (const item of items) {
-                        const index = Number.isFinite(item?.index) ? Number(item.index) : 0;
-                        const fileIndex = String(index + 1).padStart(2, "0");
-
-                        // ✅ pick print vs preview
-                        const path =
-                            type === "print"
-                                ? (item?.assets?.printPath || item?.printPath || item?.printStoragePath || item?.storagePath)
-                                : (item?.assets?.previewPath || item?.previewPath || item?.storagePath);
-
-                        if (!path) continue;
-
-                        try {
-                            const file = bucket.file(path);
-                            const [exists] = await file.exists();
-                            if (!exists) continue;
-
-                            const [buf] = await file.download();
-                            const ext = (String(path).split(".").pop() || "jpg").toLowerCase();
-
-                            // ✅ final zip entry name
-                            const entryName = `${baseFolder}/${fileIndex}.${ext}`;
-
-                            archive.append(buf, { name: entryName });
-                        } catch (e) {
-                            console.warn(`[ZIP] Failed to add ${path}`, e);
-                        }
-                    }
-                }
-
-                archive.finalize();
-            })().catch(reject);
-        });
+            return { ok: true, url };
+        } catch (e: any) {
+            console.error("[adminExportPrinterJSON] failed", e);
+            if (e instanceof HttpsError) throw e;
+            throw new HttpsError("internal", e?.message || "Export printer JSON failed");
+        }
     }
 );
 
 /**
- * ✅ (NEW) Print File Finalize Trigger
- * Checks if a new print file is 5000x5000, and updates order item metadata.
+ * ✅ Admin: Export ZIP (CORS 해결 및 메모리 최적화)
  */
-import { onObjectFinalized } from "firebase-functions/v2/storage";
+/**
+ * ✅ Admin: Export ZIP (주문 정보 텍스트 파일 포함 버전)
+ * - 구조: 날짜 / 오더번호 / 고객이름 / {사진들 + 주문정보.txt}
+ */
+/**
+ * ✅ Admin: Export ZIP (수정: 아이템 카운트 버그 수정, 가격 삭제)
+ */
+export const adminExportZipPrints = onCall(
+    {
+        region: "us-central1",
+        cors: true,
+        memory: "2GiB",
+        timeoutSeconds: 300
+    },
+    async (req) => {
+        try {
+            // 1. 권한 체크
+            if (!req.auth?.uid || req.auth.token.isAdmin !== true) {
+                throw new HttpsError("permission-denied", "Admin only.");
+            }
 
+            const { orderIds, type = "print" } = (req.data || {}) as any;
+            if (!Array.isArray(orderIds) || orderIds.length === 0) {
+                throw new HttpsError("invalid-argument", "orderIds required.");
+            }
+
+            const db = getFirestore();
+            const bucket = getStorage().bucket();
+
+            const zipName = `exports/zip/${type}_${orderIds.length}orders_${Date.now()}.zip`;
+            const zipFile = bucket.file(zipName);
+
+            const archive = archiver("zip", { zlib: { level: 9 } });
+            const out = zipFile.createWriteStream({
+                contentType: "application/zip",
+                resumable: false,
+            });
+
+            const uploadPromise = new Promise<void>((resolve, reject) => {
+                out.on("close", resolve);
+                out.on("finish", resolve);
+                out.on("error", reject);
+            });
+
+            archive.pipe(out);
+
+            let addedCount = 0;
+
+            // 2. 주문 루프 시작
+            for (const rawOrderId of orderIds) {
+                const orderId = String(rawOrderId);
+                const orderSnap = await db.collection("orders").doc(orderId).get();
+                if (!orderSnap.exists) continue;
+
+                const orderData: any = orderSnap.data() || {};
+                const orderCode = orderData?.orderCode || orderId;
+                const dateKey = toYYYYMMDD(orderData?.createdAt);
+
+                const customerName = safeFolderName(
+                    orderData?.customer?.fullName || orderData?.shipping?.fullName || "Guest"
+                );
+
+                const baseFolder = `${dateKey}/${orderCode}/${customerName}`;
+
+                // ✅ [수정 1] 아이템 정보를 텍스트 생성보다 *먼저* 가져옵니다.
+                const itemsSnap = await orderSnap.ref.collection("items").orderBy("index").get();
+                const items = itemsSnap.empty ? orderData?.items || [] : itemsSnap.docs.map((d) => d.data());
+
+                // -------------------------------------------------------
+                // 📝 [수정 2] 주문 정보 텍스트 파일 (.txt) - 가격 삭제됨
+                // -------------------------------------------------------
+                const shipping = orderData?.shipping || {};
+                const infoText = `
+[ORDER INFO]
+Order Code : ${orderCode}
+Date       : ${dateKey}
+Customer   : ${customerName}
+Phone      : ${orderData?.customer?.phone || shipping?.phone || "-"}
+Email      : ${orderData?.customer?.email || "-"}
+
+[SHIPPING ADDRESS]
+Name       : ${shipping?.fullName || "-"}
+Address    : ${shipping?.address1 || ""} ${shipping?.address2 || ""}
+City/State : ${shipping?.city || ""}, ${shipping?.state || ""}
+Postal Code: ${shipping?.postalCode || ""}
+Country    : ${shipping?.country || ""}
+Phone      : ${shipping?.phone || "-"} (Required)
+
+[ITEMS]
+Total Items: ${items.length} EA
+Note       : ${orderData?.adminNote || "-"}
+`.trim();
+
+                archive.append(infoText, { name: `${baseFolder}/order_info.txt` });
+                // -------------------------------------------------------
+
+                // 3. 이미지 파일들 추가
+                for (const item of items) {
+                    const index = Number.isFinite(item?.index) ? Number(item.index) : 0;
+                    const fileIndex = String(index + 1).padStart(2, "0");
+
+                    const path =
+                        type === "print"
+                            ? item?.assets?.printPath || item?.printPath
+                            : item?.assets?.previewPath || item?.previewPath;
+
+                    if (!path) continue;
+
+                    const file = bucket.file(path);
+                    const [exists] = await file.exists();
+
+                    if (exists) {
+                        const ext = (String(path).split(".").pop() || "jpg").toLowerCase();
+                        const entryName = `${baseFolder}/${fileIndex}.${ext}`;
+                        archive.append(file.createReadStream(), { name: entryName });
+                        addedCount++;
+                    } else {
+                        // 파일이 없으면 에러 로그를 텍스트로 남겨줌 (디버깅용)
+                        console.warn(`[ZIP] Missing file: ${path}`);
+                        archive.append(`Missing file: ${path}\n`, { name: `${baseFolder}/MISSING_${fileIndex}.txt` });
+                    }
+                }
+            }
+
+            if (addedCount === 0) {
+                archive.append("No images found. Check if 'print.jpg' generation is complete.", { name: "WARNING_NO_IMAGES.txt" });
+            }
+
+            await archive.finalize();
+            await uploadPromise;
+
+            const filename = `Batch_${orderIds.length}orders_${new Date().toISOString().slice(0, 10)}.zip`;
+            const [url] = await zipFile.getSignedUrl({
+                action: "read",
+                expires: Date.now() + 1000 * 60 * 60,
+                responseDisposition: `attachment; filename="${filename}"`,
+                responseType: "application/zip",
+            });
+
+            return { ok: true, url, addedCount };
+
+        } catch (e: any) {
+            console.error("[ZIP Error]", e);
+            throw new HttpsError("internal", e.message || "ZIP creation failed");
+        }
+    }
+);/**
+ * ✅ Print File Finalize Trigger
+ */
 export const onPrintFileFinalized = onObjectFinalized(
     { region: "us-central1", cpu: 2, memory: "1GiB" },
     async (event) => {
-        const filePath = event.data.name; // e.g. "users/.../items/0_print.jpg"
+        const filePath = event.data.name;
         if (!filePath || !filePath.endsWith("_print.jpg")) return;
 
-        // Pattern check: we need to find which order this belongs to.
-        // The storageBasePath is usually: `users/{uid}/orders/{orderId}`
-        // So print path is: `users/{uid}/orders/{orderId}/items/{index}_print.jpg`
-        // Let's try to extract orderId and index from path.
-        // Regex: .../orders/([^/]+)/items/(\d+)_print\.jpg
         const match = filePath.match(/\/orders\/([^/]+)\/items\/(\d+)_print\.jpg$/);
         if (!match) return;
 
@@ -607,7 +759,6 @@ export const onPrintFileFinalized = onObjectFinalized(
         const file = bucket.file(filePath);
 
         try {
-            // 1. Download & Measure
             const [buf] = await file.download();
             const meta = await sharp(buf).metadata();
             const width = meta.width || 0;
@@ -616,57 +767,37 @@ export const onPrintFileFinalized = onObjectFinalized(
 
             console.log(`[PrintAudit] ${filePath} => ${width}x${height}, ok=${ok5000}`);
 
-            // 2. Update Firestore Order
             const db = getFirestore();
             const orderRef = db.collection("orders").doc(orderId);
 
-            // We need to update the specific item in the array or subcollection.
-            // Check if items are in subcollection "items" OR array "items".
-            // Implementation logic in 'buildPrint5000' suggests: "orders/{orderId}/items/{itemId}" triggers,
-            // but 'getOrderDetail' checks both. We should try both or prioritize based on 'itemsCount'.
-
-            // A. Try Subcollection 'items' first (query by index)
             const itemsRef = orderRef.collection("items");
             const q = itemsRef.where("index", "==", index).limit(1);
             const snap = await q.get();
 
             const printMeta = {
-                width: width,
-                height: height,
-                ok5000: ok5000,
-                checkedAt: new Date().toISOString(), // store as string in object for simplicity
+                width,
+                height,
+                ok5000,
+                checkedAt: new Date().toISOString(),
                 source: "storage_finalize",
             };
 
             if (!snap.empty) {
-                // It's a subcollection item
-                await snap.docs[0].ref.update({
-                    "assets.printMeta": printMeta
-                });
+                await snap.docs[0].ref.update({ "assets.printMeta": printMeta });
                 console.log(`[PrintAudit] Updated subcollection item ${snap.docs[0].id}`);
             } else {
-                // B. Try main doc 'items' array
-                // We have to read the doc, find the item, and update it.
-                // Using runTransaction to be safe with array updates.
                 await db.runTransaction(async (t) => {
                     const docSnap = await t.get(orderRef);
                     if (!docSnap.exists) return;
                     const data = docSnap.data();
-                    const items = data?.items;
+                    const items = (data as any)?.items;
 
                     if (Array.isArray(items)) {
                         let found = false;
                         const newItems = items.map((it: any) => {
-                            // Match by index (ensure it matches the file path index)
                             if (it.index === index) {
                                 found = true;
-                                return {
-                                    ...it,
-                                    assets: {
-                                        ...(it.assets || {}),
-                                        printMeta
-                                    }
-                                };
+                                return { ...it, assets: { ...(it.assets || {}), printMeta } };
                             }
                             return it;
                         });
@@ -678,7 +809,6 @@ export const onPrintFileFinalized = onObjectFinalized(
                     }
                 });
             }
-
         } catch (e) {
             console.error(`[PrintAudit] Failed for ${filePath}`, e);
         }

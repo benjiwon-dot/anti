@@ -9,14 +9,15 @@
         "logs": "firebase functions:log"
     },
     "engines": {
-        "node": "20"
+        "node": "22"
     },
     "main": "lib/index.js",
     "dependencies": {
         "archiver": "^7.0.1",
         "firebase-admin": "^12.0.0",
         "firebase-functions": "^4.6.0",
-        "sharp": "^0.33.2"
+        "jszip": "^3.10.1",
+        "sharp": "^0.33.5"
     },
     "devDependencies": {
         "@types/archiver": "^7.0.0",

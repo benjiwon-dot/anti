@@ -3,6 +3,12 @@
     "name": "memotile_app_anti",
     "slug": "memotile-app-anti",
     "version": "1.0.0",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/998b0866-55ab-44aa-a1b1-9b82af8c3fe1"
+    },
     "scheme": [
       "memotile",
       "com.googleusercontent.apps.166543035480-d0hra4ce54ljrvnka86v6n0tvfkrt25b"

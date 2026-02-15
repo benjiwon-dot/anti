@@ -73,10 +73,6 @@ export async function listOrders(
     // orderBy(createdAt) + optional where(status==)
     let qry = query(collection(db, "orders"), orderBy("createdAt", sort), limit(limitCount));
 
-    if (status && status !== "ALL") {
-        qry = query(collection(db, "orders"), where("status", "==", status), orderBy("createdAt", sort), limit(limitCount));
-    }
-
     let snap;
     try {
         snap = await getDocs(qry);

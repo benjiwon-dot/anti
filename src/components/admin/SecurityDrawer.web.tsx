@@ -1,3 +1,4 @@
+// src/components/admin/SecurityDrawer.web.tsx
 "use client";
 
 import React, { useState } from "react";
@@ -117,12 +118,15 @@ export default function SecurityDrawer({ isOpen, onClose, email }: SecurityDrawe
                             )}
 
                             <form onSubmit={handleUpdatePassword} className="space-y-4">
+                                {/* 현재 비밀번호는 자동완성을 위해 current-password 지정 */}
                                 <div className="space-y-1">
                                     <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">
                                         Current Password
                                     </label>
                                     <input
                                         type="password"
+                                        name="currentPassword"
+                                        autoComplete="current-password"
                                         className="admin-input-small text-sm w-full py-3"
                                         placeholder="Required for verification"
                                         value={currentPassword}
@@ -131,12 +135,15 @@ export default function SecurityDrawer({ isOpen, onClose, email }: SecurityDrawe
                                     />
                                 </div>
 
+                                {/* 새 비밀번호는 new-password 지정 */}
                                 <div className="space-y-1">
                                     <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">
                                         New Password
                                     </label>
                                     <input
                                         type="password"
+                                        name="newPassword"
+                                        autoComplete="new-password"
                                         className="admin-input-small text-sm w-full py-3"
                                         value={newPassword}
                                         onChange={(e) => setNewPassword(e.target.value)}
@@ -150,6 +157,8 @@ export default function SecurityDrawer({ isOpen, onClose, email }: SecurityDrawe
                                     </label>
                                     <input
                                         type="password"
+                                        name="confirmPassword"
+                                        autoComplete="new-password"
                                         className="admin-input-small text-sm w-full py-3"
                                         value={confirmPassword}
                                         onChange={(e) => setConfirmPassword(e.target.value)}

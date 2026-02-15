@@ -169,20 +169,20 @@ export default function OrderSuccessScreen() {
             <SafeAreaView style={styles.container}>
                 <View style={styles.center}>
                     <ActivityIndicator size="large" color="#111" />
-                    <Text style={styles.processingTitle}>{t.processingOrder || "Processing your order..."}</Text>
+                    <Text style={styles.processingTitle}>{(t as any).processingOrder || "Processing your order..."}</Text>
                     <Text style={styles.processingDesc}>
-                        {t.processingOrderDesc ||
+                        {(t as any).processingOrderDesc ||
                             "This can take a few seconds while we finalize your payment and create the order."}
                     </Text>
 
                     <View style={{ height: 18 }} />
 
                     <TouchableOpacity style={styles.secondaryBtn} onPress={() => router.replace("/(tabs)/myorder")}>
-                        <Text style={styles.secondaryBtnText}>{t.goMyOrders || "Go to My Orders"}</Text>
+                        <Text style={styles.secondaryBtnText}>{(t as any).goMyOrders || "Go to My Orders"}</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity style={styles.linkBtn} onPress={() => router.replace("/")}>
-                        <Text style={styles.linkBtnText}>{t.backHome || "Back to Home"}</Text>
+                        <Text style={styles.linkBtnText}>{(t as any).backHome || "Back to Home"}</Text>
                     </TouchableOpacity>
                 </View>
             </SafeAreaView>
@@ -194,9 +194,9 @@ export default function OrderSuccessScreen() {
         return (
             <SafeAreaView style={styles.container}>
                 <View style={styles.center}>
-                    <Text style={styles.failTitle}>{t.orderNotFound || "We couldn't load your order yet"}</Text>
+                    <Text style={styles.failTitle}>{(t as any).orderNotFound || "We couldn't load your order yet"}</Text>
                     <Text style={styles.failDesc}>
-                        {t.orderNotFoundDesc ||
+                        {(t as any).orderNotFoundDesc ||
                             "Your payment may have succeeded, but the order is still being created. Please try again."}
                     </Text>
 
@@ -206,15 +206,15 @@ export default function OrderSuccessScreen() {
                         style={styles.primaryBtn}
                         onPress={() => router.replace({ pathname: "/myorder/success", params: { id } })}
                     >
-                        <Text style={styles.primaryBtnText}>{t.retry || "Retry"}</Text>
+                        <Text style={styles.primaryBtnText}>{(t as any).retry || "Retry"}</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity style={styles.secondaryBtn} onPress={() => router.replace("/(tabs)/myorder")}>
-                        <Text style={styles.secondaryBtnText}>{t.goMyOrders || "View My Orders"}</Text>
+                        <Text style={styles.secondaryBtnText}>{(t as any).goMyOrders || "View My Orders"}</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity style={styles.linkBtn} onPress={() => router.replace("/")}>
-                        <Text style={styles.linkBtnText}>{t.backHome || "Back to Home"}</Text>
+                        <Text style={styles.linkBtnText}>{(t as any).backHome || "Back to Home"}</Text>
                     </TouchableOpacity>
                 </View>
             </SafeAreaView>
@@ -233,11 +233,11 @@ export default function OrderSuccessScreen() {
                     </Animated.View>
 
                     <Animated.View style={[styles.textCenter, animatedContentStyle]}>
-                        <Text style={styles.title}>{t.thankYou || "Thank You!"}</Text>
+                        <Text style={styles.title}>{(t as any).thankYou || "Thank You!"}</Text>
                         <Text style={styles.message}>
-                            {t.orderPlaced || "Your order has been placed successfully."}
+                            {(t as any).orderPlaced || "Your order has been placed successfully."}
                             {"\n"}
-                            {t.emailReceipt || "We've sent a receipt to"} {email}.
+                            {(t as any).emailReceipt || "We've sent a receipt to"} {email}.
                         </Text>
                     </Animated.View>
 
@@ -250,11 +250,11 @@ export default function OrderSuccessScreen() {
 
                     <Animated.View style={[styles.orderInfo, animatedContentStyle]}>
                         <View style={styles.infoRow}>
-                            <Text style={styles.label}>{t.orderNumberLabel || "ORDER NUMBER"}</Text>
+                            <Text style={styles.label}>{(t as any).orderNumberLabel || "ORDER NUMBER"}</Text>
                             <Text style={styles.value}>#{id}</Text>
                         </View>
                         <View style={styles.infoRow}>
-                            <Text style={styles.estimate}>{t.estimatedDelivery || "Estimated delivery: 5 days"}</Text>
+                            <Text style={styles.estimate}>{(t as any).estimatedDelivery || "Estimated delivery: 5 days"}</Text>
                         </View>
                     </Animated.View>
                 </View>
@@ -262,11 +262,11 @@ export default function OrderSuccessScreen() {
 
             <View style={styles.actions}>
                 <TouchableOpacity style={styles.primaryBtn} onPress={() => router.replace("/(tabs)/myorder")}>
-                    <Text style={styles.primaryBtnText}>{t.goMyOrders || "View My Orders"}</Text>
+                    <Text style={styles.primaryBtnText}>{(t as any).goMyOrders || "View My Orders"}</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity style={styles.secondaryBtn} onPress={() => router.replace("/")}>
-                    <Text style={styles.secondaryBtnText}>{t.backHome || "Back to Home"}</Text>
+                    <Text style={styles.secondaryBtnText}>{(t as any).backHome || "Back to Home"}</Text>
                 </TouchableOpacity>
             </View>
         </SafeAreaView>

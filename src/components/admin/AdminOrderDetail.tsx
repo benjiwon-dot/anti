@@ -1,4 +1,6 @@
 // src/components/admin/AdminOrderDetail.tsx
+"use client";
+
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "expo-router";
 
@@ -17,6 +19,7 @@ import {
     MapPin,
     StickyNote,
     Truck,
+    Tag,
 } from "lucide-react";
 
 import { getStorage, ref, getDownloadURL } from "firebase/storage";
@@ -25,6 +28,7 @@ import { getFunctions, httpsCallable } from "firebase/functions";
 import { OrderDetail } from "@/lib/admin/types";
 import { getOrderDetail } from "@/lib/admin/orderRepo";
 import StatusBadge from "./StatusBadge";
+import { app } from "@/lib/firebase";
 
 const isWeb = typeof window !== "undefined";
 
@@ -59,7 +63,11 @@ function yyyymmddFromISO(iso?: string) {
     return `${y}${m}${day}`;
 }
 
-async function resolveStorageUrl(storage: ReturnType<typeof getStorage>, maybeUrl?: string | null, maybePath?: string | null) {
+async function resolveStorageUrl(
+    storage: ReturnType<typeof getStorage>,
+    maybeUrl?: string | null,
+    maybePath?: string | null
+) {
     if (maybeUrl && typeof maybeUrl === "string" && maybeUrl.startsWith("http")) return maybeUrl;
     if (maybePath && typeof maybePath === "string" && maybePath.length > 3) {
         return await getDownloadURL(ref(storage, maybePath));
@@ -67,23 +75,28 @@ async function resolveStorageUrl(storage: ReturnType<typeof getStorage>, maybeUr
     return null;
 }
 
-async function downloadFromUrl(url: string, filename = "prints.zip") {
+function browserDownloadUrl(url: string, filename?: string) {
     if (!isWeb) return;
     try {
-        const res = await fetch(url);
-        if (!res.ok) throw new Error("Download failed");
-        const blob = await res.blob();
         const a = document.createElement("a");
-        a.href = URL.createObjectURL(blob);
-        a.download = filename;
+        a.href = url;
+        if (filename) a.download = filename;
+        a.target = "_blank";
+        a.rel = "noreferrer";
         document.body.appendChild(a);
         a.click();
         a.remove();
-        URL.revokeObjectURL(a.href);
-    } catch (e) {
-        console.error("Download error:", e);
-        throw e;
+    } catch {
+        window.open(url, "_blank", "noreferrer");
     }
+}
+
+function alertCallableError(prefix: string, e: any) {
+    const code = e?.code || "unknown";
+    const msg = e?.message || String(e);
+    const details = e?.details ? JSON.stringify(e.details) : "";
+    console.error(prefix, e);
+    alert(`${prefix}\ncode: ${code}\nmessage: ${msg}${details ? `\ndetails: ${details}` : ""}`);
 }
 
 export default function AdminOrderDetail({ orderId }: { orderId: string }) {
@@ -94,15 +107,15 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    // resolved urls per item index
-    const [resolved, setResolved] = useState<Record<number, { previewUrl?: string | null; printUrl?: string | null }>>(
-        {}
-    );
+    const [resolved, setResolved] = useState<
+        Record<number, { previewUrl?: string | null; printUrl?: string | null }>
+    >({});
 
-    // client-side audit fallback (web only)
     const [printDims, setPrintDims] = useState<Record<number, { w: number; h: number }>>({});
 
-    const storage = useMemo(() => getStorage(), []);
+    const storage = useMemo(() => getStorage(app), []);
+    const functions = useMemo(() => getFunctions(app, "us-central1"), []);
+
     const aliveRef = useRef(true);
 
     useEffect(() => {
@@ -140,6 +153,14 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
         }
     };
 
+    const safeBack = () => {
+        if (router.canGoBack()) {
+            router.back();
+        } else {
+            router.replace("/admin/orders");
+        }
+    };
+
     const refetch = async () => {
         setLoading(true);
         setError(null);
@@ -159,7 +180,6 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
 
             setOrder(data);
 
-            // resolve preview/print URLs safely (web admin)
             if (isWeb && data?.items?.length) {
                 const next: Record<number, { previewUrl?: string | null; printUrl?: string | null }> = {};
                 await Promise.all(
@@ -168,23 +188,29 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
                             const previewUrl = await resolveStorageUrl(
                                 storage,
                                 pickAdminThumb(item),
-                                (item as any)?.assets?.previewPath || (item as any)?.previewPath || (item as any)?.storagePath
+                                (item as any)?.assets?.previewPath ||
+                                (item as any)?.previewPath ||
+                                (item as any)?.storagePath
                             );
 
                             const printUrl = await resolveStorageUrl(
                                 storage,
                                 (item as any)?.assets?.printUrl || (item as any)?.printUrl,
-                                (item as any)?.assets?.printPath || (item as any)?.printPath || (item as any)?.printStoragePath
+                                (item as any)?.assets?.printPath ||
+                                (item as any)?.printPath ||
+                                (item as any)?.printStoragePath
                             );
 
                             next[idx] = { previewUrl, printUrl };
 
-                            // fallback audit: load naturalWidth/Height from print url
                             if (printUrl) {
                                 const img = new Image();
                                 img.onload = () => {
                                     if (!aliveRef.current) return;
-                                    setPrintDims((prev) => ({ ...prev, [idx]: { w: img.naturalWidth, h: img.naturalHeight } }));
+                                    setPrintDims((prev) => ({
+                                        ...prev,
+                                        [idx]: { w: img.naturalWidth, h: img.naturalHeight },
+                                    }));
                                 };
                                 img.src = printUrl;
                             }
@@ -208,7 +234,6 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
 
     useEffect(() => {
         refetch();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [orderId]);
 
     /* ---------- Actions ---------- */
@@ -216,17 +241,17 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
     const handleDownloadZip = async () => {
         setBusy(true);
         try {
-            const fn = httpsCallable(getFunctions(undefined, "us-central1"), "adminExportZipPrints");
+            const fn = httpsCallable(functions, "adminExportZipPrints");
             const res = await fn({ orderIds: [orderId], type: "print" });
             const { url } = res.data as any;
 
             if (url) {
-                await downloadFromUrl(url, `Memotile_Print_${orderId}_${new Date().toISOString().slice(0, 10)}.zip`);
+                browserDownloadUrl(url, `Memotile_Print_${orderId}_${new Date().toISOString().slice(0, 10)}.zip`);
             } else {
                 alert("ZIP generation returned no URL.");
             }
         } catch (e: any) {
-            alert("ZIP Download error: " + (e?.message || String(e)));
+            alertCallableError("ZIP Download error:", e);
         } finally {
             setBusy(false);
         }
@@ -237,16 +262,17 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
 
         setBusy(true);
         try {
-            const fn = httpsCallable(getFunctions(undefined, "us-central1"), "adminExportPrinterJSON");
+            const fn = httpsCallable(functions, "adminExportPrinterJSON");
             const res = await fn({ orderIds: [orderId] });
             const { url } = res.data as any;
+
             if (url) {
-                await downloadFromUrl(url, `order_${orderId}.json`);
+                browserDownloadUrl(url, `order_${orderId}.json`);
             } else {
                 alert("JSON export returned no URL");
             }
         } catch (e: any) {
-            alert("JSON Export error: " + (e?.message || String(e)));
+            alertCallableError("JSON Export error:", e);
         } finally {
             setBusy(false);
         }
@@ -257,13 +283,11 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
 
         setBusy(true);
         try {
-            const fn = httpsCallable(getFunctions(undefined, "us-central1"), "adminUpdateOrderOps");
+            const fn = httpsCallable(functions, "adminUpdateOrderOps");
             await fn({ orderId, status });
-
-            // safest: refresh
             await refetch();
         } catch (e: any) {
-            alert("Update failed: " + (e?.message || String(e)));
+            alertCallableError("Update failed:", e);
         } finally {
             setBusy(false);
         }
@@ -272,11 +296,11 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
     const handleSaveOps = async (patch: { trackingNumber?: string; adminNote?: string }) => {
         setBusy(true);
         try {
-            const fn = httpsCallable(getFunctions(undefined, "us-central1"), "adminUpdateOrderOps");
+            const fn = httpsCallable(functions, "adminUpdateOrderOps");
             await fn({ orderId, ...patch });
             await refetch();
         } catch (e: any) {
-            alert("Save failed: " + (e?.message || String(e)));
+            alertCallableError("Save failed:", e);
         } finally {
             setBusy(false);
         }
@@ -291,11 +315,11 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
 
         setBusy(true);
         try {
-            const fn = httpsCallable(getFunctions(undefined, "us-central1"), "adminCancelOrder");
+            const fn = httpsCallable(functions, "adminCancelOrder");
             await fn({ orderId, reason });
             await refetch();
         } catch (e: any) {
-            alert("Cancel failed: " + (e?.message || String(e)));
+            alertCallableError("Cancel failed:", e);
         } finally {
             setBusy(false);
         }
@@ -317,7 +341,7 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
             <div className="text-center py-20">
                 <p className="text-rose-500 font-bold text-xl">Error loading order</p>
                 <p className="text-zinc-500">{error || "Order not found"}</p>
-                <button onClick={() => router.back()} className="admin-btn admin-btn-secondary mt-6">
+                <button onClick={safeBack} className="admin-btn admin-btn-secondary mt-6">
                     Go Back
                 </button>
             </div>
@@ -326,26 +350,33 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
 
     const customerName = safeName(order.customer?.fullName || order.shipping?.fullName || "Guest");
     const dateKey = yyyymmddFromISO(order.createdAt);
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const orderOps = order as any;
 
-    const fullAddress = [
-        order.shipping?.address1,
-        order.shipping?.address2,
-        [order.shipping?.city, order.shipping?.state].filter(Boolean).join(", "),
-        order.shipping?.postalCode,
-        order.shipping?.country,
-    ]
-        .filter(Boolean)
-        .join(" · ");
+    const promoCode = orderOps.promoCode || orderOps.promo?.code || "";
+    const discountAmount = orderOps.discount ?? orderOps.pricing?.discount ?? 0;
+    const totalPaid = orderOps.total ?? orderOps.pricing?.total ?? 0;
+
+    const shipFullName = order.shipping?.fullName || customerName;
+    const shipAddress1 = order.shipping?.address1 || "";
+    const shipAddress2 = order.shipping?.address2 || "";
+    const shipCityState = [order.shipping?.city, order.shipping?.state].filter(Boolean).join(", ");
+    const shipPostal = order.shipping?.postalCode || "";
+    const shipCountry = order.shipping?.country || "";
+    const shipPhone = order.shipping?.phone || order.customer?.phone || "";
+
+    const customerEmail = order.customer?.email || order.shipping?.email || "-";
+    const customerPhone = order.customer?.phone || order.shipping?.phone || "-";
+
+    // 📱 기기 정보 가져오기 (DB에 deviceInfo 필드로 저장되었다고 가정)
+    const deviceInfo = orderOps.deviceInfo;
+    const isIos = deviceInfo?.os === "ios";
 
     return (
         <div className="space-y-8 pb-20">
             {/* Header */}
             <div className="flex flex-col md:flex-row justify-between gap-6">
                 <div className="flex items-center gap-4">
-                    <button onClick={() => router.back()} className="admin-btn admin-btn-secondary !p-2">
+                    <button onClick={safeBack} className="admin-btn admin-btn-secondary !p-2">
                         <ChevronLeft size={24} />
                     </button>
 
@@ -353,10 +384,19 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
                         <div className="flex items-center gap-3">
                             <h1 className="text-3xl font-black font-mono">{order.orderCode}</h1>
                             <StatusBadge status={order.status} />
+                            {promoCode && (
+                                <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-indigo-100 text-indigo-700 font-bold border border-indigo-200">
+                                    <Tag size={12} />
+                                    (P)
+                                </span>
+                            )}
                         </div>
                         <p className="text-xs text-zinc-400 font-mono flex items-center gap-2">
                             {order.id}
-                            <button className="inline-flex items-center gap-1 text-zinc-400 hover:text-zinc-800" onClick={() => copyText(order.id)}>
+                            <button
+                                className="inline-flex items-center gap-1 text-zinc-400 hover:text-zinc-800"
+                                onClick={() => copyText(order.id)}
+                            >
                                 <Copy size={12} /> copy
                             </button>
                         </p>
@@ -396,15 +436,29 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
 
             {/* Customer / Shipping / Ops */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                {/* Customer */}
                 <div className="admin-card p-4 space-y-2">
                     <div className="text-xs font-black text-zinc-400 uppercase">Customer</div>
-                    <div className="text-lg font-black">{customerName}</div>
+                    <div>
+                        <div className="text-lg font-black">{customerName}</div>
 
-                    <div className="text-sm text-zinc-600 flex items-center gap-2">
+                        {/* 📱 기기 정보 표시 뱃지 */}
+                        {deviceInfo && (
+                            <div
+                                className={`mt-1 inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold border ${isIos ? "bg-zinc-100 text-zinc-800 border-zinc-200" : "bg-green-50 text-green-700 border-green-200"
+                                    }`}
+                            >
+                                <span className="text-xs">{isIos ? "🍎" : "🤖"}</span>
+                                <span className="truncate max-w-[150px]">{deviceInfo.model || deviceInfo.os}</span>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="text-sm text-zinc-600 flex items-center gap-2 mt-2">
                         <Mail size={14} />
-                        <span>{order.customer?.email || order.shipping?.email || "-"}</span>
-                        {order.customer?.email && (
-                            <button className="ml-auto text-zinc-400 hover:text-zinc-800" onClick={() => copyText(order.customer?.email || "")}>
+                        <span className="truncate">{customerEmail}</span>
+                        {customerEmail && customerEmail !== "-" && (
+                            <button className="ml-auto text-zinc-400 hover:text-zinc-800" onClick={() => copyText(customerEmail)}>
                                 <Copy size={14} />
                             </button>
                         )}
@@ -412,28 +466,70 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
 
                     <div className="text-sm text-zinc-600 flex items-center gap-2">
                         <Phone size={14} />
-                        <span>{order.customer?.phone || order.shipping?.phone || "-"}</span>
-                        {(order.customer?.phone || order.shipping?.phone) && (
-                            <button className="ml-auto text-zinc-400 hover:text-zinc-800" onClick={() => copyText(String(order.customer?.phone || order.shipping?.phone || ""))}>
+                        <span>{customerPhone}</span>
+                        {customerPhone && customerPhone !== "-" && (
+                            <button
+                                className="ml-auto text-zinc-400 hover:text-zinc-800"
+                                onClick={() => copyText(String(customerPhone))}
+                            >
                                 <Copy size={14} />
                             </button>
                         )}
                     </div>
+
+                    {/* Promo Info */}
+                    <div className="mt-4 pt-4 border-t border-zinc-100 space-y-2">
+                        {promoCode && (
+                            <div className="flex justify-between items-center text-sm">
+                                <span className="text-zinc-500 font-bold flex items-center gap-1">
+                                    <Tag size={12} /> Promo Code
+                                </span>
+                                <span className="text-indigo-600 font-bold">{promoCode}</span>
+                            </div>
+                        )}
+
+                        {discountAmount > 0 && (
+                            <div className="flex justify-between items-center text-sm">
+                                <span className="text-zinc-500 font-bold">Discount</span>
+                                <span className="text-green-600 font-bold">-฿{discountAmount.toLocaleString()}</span>
+                            </div>
+                        )}
+
+                        <div className="flex justify-between items-center text-base mt-1">
+                            <span className="text-zinc-900 font-black">Total Paid</span>
+                            <span className="text-zinc-900 font-black">฿{totalPaid.toLocaleString()}</span>
+                        </div>
+                    </div>
                 </div>
 
-                <div className="admin-card p-4 space-y-2">
-                    <div className="text-xs font-black text-zinc-400 uppercase">Shipping</div>
-                    <div className="text-sm text-zinc-800 flex items-start gap-2">
-                        <MapPin size={16} className="mt-0.5" />
-                        <div className="flex-1">
-                            <div className="font-bold">{order.shipping?.fullName || customerName}</div>
-                            <div className="text-zinc-600">{fullAddress || "-"}</div>
-                        </div>
-                        {fullAddress && (
-                            <button className="text-zinc-400 hover:text-zinc-800" onClick={() => copyText(fullAddress)}>
-                                <Copy size={14} />
-                            </button>
-                        )}
+                {/* Shipping */}
+                <div className="admin-card p-4 space-y-3">
+                    <div className="text-xs font-black text-zinc-400 uppercase flex items-center gap-2">
+                        <MapPin size={14} />
+                        Shipping
+                    </div>
+
+                    <div className="grid grid-cols-[110px_1fr] gap-x-3 gap-y-2 text-sm">
+                        <div className="text-zinc-400 font-bold">Full name</div>
+                        <div className="font-bold">{shipFullName || "-"}</div>
+
+                        <div className="text-zinc-400 font-bold">Address</div>
+                        <div className="text-zinc-700">{shipAddress1 || "-"}</div>
+
+                        <div className="text-zinc-400 font-bold">Address2</div>
+                        <div className="text-zinc-700">{shipAddress2 || "-"}</div>
+
+                        <div className="text-zinc-400 font-bold">City/State</div>
+                        <div className="text-zinc-700">{shipCityState || "-"}</div>
+
+                        <div className="text-zinc-400 font-bold">Postal</div>
+                        <div className="text-zinc-700">{shipPostal || "-"}</div>
+
+                        <div className="text-zinc-400 font-bold">Country</div>
+                        <div className="text-zinc-700">{shipCountry || "-"}</div>
+
+                        <div className="text-zinc-400 font-bold">Phone</div>
+                        <div className="text-zinc-700">{shipPhone || "-"}</div>
                     </div>
 
                     <div className="text-xs text-zinc-500 font-mono">
@@ -441,6 +537,7 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
                     </div>
                 </div>
 
+                {/* Ops */}
                 <div className="admin-card p-4 space-y-3">
                     <div className="text-xs font-black text-zinc-400 uppercase">Ops</div>
 
@@ -501,12 +598,11 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
                             <div className="flex-1 min-w-0 flex flex-col gap-2">
                                 <div className="flex justify-between gap-3">
                                     <div className="min-w-0">
-                                        <p className="font-bold truncate">{item.filterId}</p>
+                                        <p className="font-bold truncate">{(item as any).filterId}</p>
                                         <p className="text-xs text-zinc-400">
-                                            {item.size} × {item.quantity} · index {item.index}
+                                            {(item as any).size} × {(item as any).quantity} · index {(item as any).index}
                                         </p>
 
-                                        {/* 5000 audit */}
                                         <div className="mt-2 flex flex-wrap gap-2">
                                             {meta ? (
                                                 meta.ok5000 ? (
@@ -541,13 +637,13 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
                                             {!printOk ? (
                                                 <span className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] bg-amber-100 text-amber-700 font-bold border border-amber-200">
                                                     <AlertCircle size={10} />
-                                                    Print file not ready (no printUrl/printPath)
+                                                    Print file not ready
                                                 </span>
                                             ) : null}
                                         </div>
                                     </div>
 
-                                    <p className="font-black whitespace-nowrap">฿{item.lineTotal.toLocaleString()}</p>
+                                    <p className="font-black whitespace-nowrap">฿{(item as any).lineTotal.toLocaleString()}</p>
                                 </div>
 
                                 <div className="mt-2 grid grid-cols-2 gap-2">
@@ -562,7 +658,7 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
                                     <button
                                         onClick={() => (printUrl ? openUrl(printUrl) : openStoragePath((item as any)?.assets?.printPath))}
                                         className="admin-btn admin-btn-secondary w-full"
-                                        disabled={!printOk && !(item as any)?.assets?.printPath}
+                                        disabled={!printOk && !(item as any)?.assets?.assets?.printPath && !(item as any)?.assets?.printPath}
                                     >
                                         <ExternalLink size={12} /> View Print
                                     </button>

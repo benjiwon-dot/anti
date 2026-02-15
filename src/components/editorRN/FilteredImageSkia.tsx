@@ -1,6 +1,6 @@
 // src/components/editorRN/FilteredImageSkia.tsx
 import React, { useMemo } from "react";
-import { Image as RNImage, View, type ViewStyle } from "react-native";
+import { View, type ViewStyle } from "react-native";
 import {
     Canvas,
     Image as SkiaImage,
@@ -17,10 +17,8 @@ type Props = {
     height: number;
     matrix?: M;
     style?: ViewStyle;
-
-    // ✅ ADD: overlay filter support (baked into snapshot)
-    overlayColor?: string;      // e.g. "#FFAA00" or "rgba(0,0,0,1)"
-    overlayOpacity?: number;    // 0..1 (recommended) - we'll clamp
+    overlayColor?: string;
+    overlayOpacity?: number;
 };
 
 export interface FilteredImageSkiaRef {
@@ -35,14 +33,12 @@ const clamp01 = (v: any) => {
 
 const FilteredImageSkia = React.forwardRef<FilteredImageSkiaRef, Props>(
     ({ uri, width, height, matrix, style, overlayColor, overlayOpacity }, ref) => {
-        const img = useImage(uri);
+        const img = useImage(uri || "");
         const canvasRef = useCanvasRef();
 
-        // ✅ Hard-guard: Skia는 number만 허용
-        const W = Number(width) || 0;
-        const H = Number(height) || 0;
+        const W = Number(width) || 1;
+        const H = Number(height) || 1;
 
-        // Safety: ensure matrix is valid 20-length array
         const safeMatrix = matrix && matrix.length === 20 ? matrix : IDENTITY;
 
         const imagePaint = useMemo(() => {
@@ -52,7 +48,6 @@ const FilteredImageSkia = React.forwardRef<FilteredImageSkiaRef, Props>(
             return p;
         }, [safeMatrix]);
 
-        // ✅ overlay paint (color + alpha)
         const overlayPaint = useMemo(() => {
             const color = (overlayColor || "").trim();
             const a = clamp01(overlayOpacity);
@@ -62,60 +57,53 @@ const FilteredImageSkia = React.forwardRef<FilteredImageSkiaRef, Props>(
             try {
                 const p = Skia.Paint();
                 p.setAntiAlias(true);
-
-                // Skia.Color accepts hex / rgba strings in most cases.
-                // We set alpha via setAlphaf to ensure opacity is applied.
                 p.setColor(Skia.Color(color));
                 p.setAlphaf(a);
-
                 return p;
             } catch {
-                // invalid color string -> no overlay
                 return null;
             }
         }, [overlayColor, overlayOpacity]);
 
         React.useImperativeHandle(ref, () => ({
-            snapshot: () => canvasRef.current?.makeImageSnapshot(),
+            snapshot: () => {
+                // 이미지가 로드되지 않았으면 null 반환 (재시도 유도)
+                if (!img && uri) return null;
+
+                // ✅ [핵심 수정] try-catch로 감싸서 에러 방지
+                try {
+                    // 캔버스 참조가 없거나 Skia 뷰가 준비되지 않았을 때 에러가 날 수 있음
+                    return canvasRef.current?.makeImageSnapshot() || null;
+                } catch (e) {
+                    // 에러 로그만 남기고 null 반환 -> 상위 컴포넌트가 알아서 재시도함
+                    console.warn("[FilteredImageSkia] Snapshot not ready yet, retrying...", e);
+                    return null;
+                }
+            },
         }));
 
         return (
             <View style={[{ width: W, height: H }, style]} pointerEvents="none">
-                {/* ✅ fallback: 로딩 중에는 RNImage를 보여줌 */}
-                {!img && (
-                    <RNImage
-                        source={{ uri }}
-                        style={{ width: "100%", height: "100%" }}
-                        resizeMode="cover"
-                    />
-                )}
-
-                {/* ✅ Canvas는 항상 존재해야 snapshot이 안정적 */}
                 <Canvas
                     ref={canvasRef}
-                    style={[
-                        { position: "absolute", left: 0, top: 0, right: 0, bottom: 0 },
-                        { opacity: img ? 1 : 0 },
-                    ]}
+                    style={{ flex: 1 }}
                 >
-                    {img && W > 0 && H > 0 && (
-                        <>
-                            {/* base image + matrix */}
-                            <SkiaImage
-                                image={img}
-                                x={0}
-                                y={0}
-                                width={W}
-                                height={H}
-                                fit="cover"
-                                paint={imagePaint}
-                            />
+                    {img ? (
+                        <SkiaImage
+                            image={img}
+                            x={0}
+                            y={0}
+                            width={W}
+                            height={H}
+                            fit="cover"
+                            paint={imagePaint}
+                        />
+                    ) : (
+                        <Rect x={0} y={0} width={W} height={H} color="transparent" />
+                    )}
 
-                            {/* ✅ overlay layer baked into snapshot */}
-                            {overlayPaint && (
-                                <Rect x={0} y={0} width={W} height={H} paint={overlayPaint} />
-                            )}
-                        </>
+                    {overlayPaint && (
+                        <Rect x={0} y={0} width={W} height={H} paint={overlayPaint} />
                     )}
                 </Canvas>
             </View>

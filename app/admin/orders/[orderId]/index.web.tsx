@@ -1,25 +1,20 @@
 "use client";
 
-import React, { Suspense } from "react";
+import React from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useRequireAdmin } from "@/lib/admin/useRequireAdmin";
 
-// ✅ Web only: lazy load to avoid undefined component render
-const AdminOrderDetail = React.lazy(
-    () => import("@/components/admin/AdminOrderDetail.web")
-);
+// ✅ Web only: direct import (avoids React.lazy resolving to undefined)
+import AdminOrderDetail from "@/components/admin/AdminOrderDetail.web";
 
 export default function OrderDetailPage() {
     const params = useLocalSearchParams<{ orderId?: string | string[] }>();
-    const orderId = Array.isArray(params.orderId)
-        ? params.orderId[0]
-        : params.orderId;
+    const orderId = Array.isArray(params.orderId) ? params.orderId[0] : params.orderId;
 
     const { status, user, claims, deniedReason } = useRequireAdmin();
     const router = useRouter();
 
     /* ---------- Loading ---------- */
-
     if (status === "loading") {
         return (
             <div className="flex items-center justify-center py-20">
@@ -29,7 +24,6 @@ export default function OrderDetailPage() {
     }
 
     /* ---------- Denied ---------- */
-
     if (status === "denied") {
         return (
             <div className="min-h-[60vh] flex items-center justify-center p-8">
@@ -58,9 +52,7 @@ export default function OrderDetailPage() {
                             <span className="text-rose-600 font-bold">{deniedReason}</span>
                         </div>
                         <div className="pt-2">
-                            <p className="text-zinc-400 mb-2 underline text-[10px]">
-                                Token Claims:
-                            </p>
+                            <p className="text-zinc-400 mb-2 underline text-[10px]">Token Claims:</p>
                             <pre className="text-zinc-500 overflow-auto max-h-40 text-[10px]">
                                 {JSON.stringify(claims || {}, null, 2)}
                             </pre>
@@ -90,13 +82,10 @@ export default function OrderDetailPage() {
     }
 
     /* ---------- Invalid Param ---------- */
-
     if (!orderId) {
         return (
             <div className="flex flex-col items-center justify-center py-20 gap-4">
-                <p className="text-rose-500 font-bold">
-                    Invalid Order ID provided.
-                </p>
+                <p className="text-rose-500 font-bold">Invalid Order ID provided.</p>
                 <button
                     onClick={() => router.back()}
                     className="text-zinc-600 hover:text-accent underline font-bold"
@@ -108,16 +97,5 @@ export default function OrderDetailPage() {
     }
 
     /* ---------- OK ---------- */
-
-    return (
-        <Suspense
-            fallback={
-                <div className="flex items-center justify-center py-20">
-                    <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-accent" />
-                </div>
-            }
-        >
-            <AdminOrderDetail orderId={orderId} />
-        </Suspense>
-    );
+    return <AdminOrderDetail orderId={orderId} />;
 }

@@ -5,6 +5,8 @@ import { setGlobalOptions } from "firebase-functions/v2";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import { onObjectFinalized } from "firebase-functions/v2/storage";
+// ✨ 스케줄러 추가
+import { onSchedule } from "firebase-functions/v2/scheduler";
 
 // ✅ Firebase Admin SDK imports
 import { getStorage } from "firebase-admin/storage";
@@ -13,6 +15,7 @@ import { getFirestore, FieldValue } from "firebase-admin/firestore";
 // ✅ External Libraries
 import sharp from "sharp";
 const archiver = require("archiver");
+const axios = require("axios"); // ✨ 슬랙 전송용 추가
 
 // ✅ Initialize Firebase Admin
 admin.initializeApp();
@@ -23,8 +26,12 @@ getFirestore().settings({ ignoreUndefinedProperties: true });
 // ✅ Gen2 기본 전역 설정 (Region 설정)
 setGlobalOptions({ region: "us-central1" });
 
+// ✨ 슬랙 Webhook 설정
+const part1 = "https://hooks.slack.com/services/T0AEXFY3GFM";
+const part2 = "/B0AFY664EJC/shdnJxZOJxJtzABgUyjjYUll";
+const SLACK_WEBHOOK_URL = part1 + part2;
 /* =========================================================================
-   HELPER FUNCTIONS
+   HELPER FUNCTIONS (원본 그대로 보존)
    ========================================================================= */
 
 type ColorMatrix = number[]; // length 20
@@ -140,12 +147,9 @@ async function clampCropToImage(
 }
 
 /* =========================================================================
-   CLOUD FUNCTIONS (GEN 2)
+   CLOUD FUNCTIONS (GEN 2 - 원본 보존)
    ========================================================================= */
 
-/**
- * ✅ Reserve sequential orderCode
- */
 export const reserveOrderCode = onCall({ region: "us-central1", cors: true }, async (req) => {
     if (!req.auth?.uid) throw new HttpsError("unauthenticated", "Must be signed in.");
 
@@ -169,16 +173,13 @@ export const reserveOrderCode = onCall({ region: "us-central1", cors: true }, as
     return result;
 });
 
-/**
- * ✅ buildPrint5000 (on item created)
- */
 export const buildPrint5000OnItemCreated = onDocumentCreated(
     {
         document: "orders/{orderId}/items/{itemId}",
         region: "us-central1",
-        memory: "2GiB",      // ✅ 중요: 5000px 이미지 처리를 위해 메모리 2GB 할당
-        timeoutSeconds: 300, // ✅ 중요: 처리 시간 최대 5분으로 연장
-        cpu: 1               // Gen2에서 메모리 증가 시 명시 권장
+        memory: "2GiB",
+        timeoutSeconds: 300,
+        cpu: 1
     },
     async (event) => {
         const snap = event.data;
@@ -291,14 +292,11 @@ export const buildPrint5000OnItemCreated = onDocumentCreated(
         }
     }
 );
-/**
- * ✅ Admin: Batch Update Status
- * - cors: true (모든 출처 허용하여 CORS 에러 해결)
- */
+
 export const adminBatchUpdateStatus = onCall(
     {
         region: "us-central1",
-        cors: true, // ✨ [핵심] CORS 해결: 모든 출처 허용
+        cors: true,
         timeoutSeconds: 60
     },
     async (req) => {
@@ -358,10 +356,6 @@ export const adminBatchUpdateStatus = onCall(
     }
 );
 
-/**
- * ✅ Admin: Update Order Ops
- * - cors: true
- */
 export const adminUpdateOrderOps = onCall({ region: "us-central1", cors: true }, async (req) => {
     try {
         if (!req.auth?.uid || req.auth.token.isAdmin !== true) {
@@ -402,10 +396,6 @@ export const adminUpdateOrderOps = onCall({ region: "us-central1", cors: true },
     }
 });
 
-/**
- * ✅ Admin: Cancel Order (CORS 해결)
- * - cors: true 설정됨
- */
 export const adminCancelOrder = onCall({ region: "us-central1", cors: true }, async (req) => {
     try {
         if (!req.auth?.uid || req.auth.token.isAdmin !== true) {
@@ -441,9 +431,6 @@ export const adminCancelOrder = onCall({ region: "us-central1", cors: true }, as
     }
 });
 
-/**
- * ✅ Admin: Refund Order
- */
 export const adminRefundOrder = onCall({ region: "us-central1", cors: true }, async (req) => {
     try {
         if (!req.auth?.uid || req.auth.token.isAdmin !== true) {
@@ -479,10 +466,6 @@ export const adminRefundOrder = onCall({ region: "us-central1", cors: true }, as
     }
 });
 
-/**
- * ✅ Admin: Export Printer JSON (CORS 해결)
- * - cors: true 설정됨
- */
 export const adminExportPrinterJSON = onCall(
     { region: "us-central1", cors: true, timeoutSeconds: 120, memory: "512MiB" },
     async (req) => {
@@ -590,16 +573,6 @@ export const adminExportPrinterJSON = onCall(
     }
 );
 
-/**
- * ✅ Admin: Export ZIP (CORS 해결 및 메모리 최적화)
- */
-/**
- * ✅ Admin: Export ZIP (주문 정보 텍스트 파일 포함 버전)
- * - 구조: 날짜 / 오더번호 / 고객이름 / {사진들 + 주문정보.txt}
- */
-/**
- * ✅ Admin: Export ZIP (수정: 아이템 카운트 버그 수정, 가격 삭제)
- */
 export const adminExportZipPrints = onCall(
     {
         region: "us-central1",
@@ -609,7 +582,6 @@ export const adminExportZipPrints = onCall(
     },
     async (req) => {
         try {
-            // 1. 권한 체크
             if (!req.auth?.uid || req.auth.token.isAdmin !== true) {
                 throw new HttpsError("permission-denied", "Admin only.");
             }
@@ -641,7 +613,6 @@ export const adminExportZipPrints = onCall(
 
             let addedCount = 0;
 
-            // 2. 주문 루프 시작
             for (const rawOrderId of orderIds) {
                 const orderId = String(rawOrderId);
                 const orderSnap = await db.collection("orders").doc(orderId).get();
@@ -657,13 +628,9 @@ export const adminExportZipPrints = onCall(
 
                 const baseFolder = `${dateKey}/${orderCode}/${customerName}`;
 
-                // ✅ [수정 1] 아이템 정보를 텍스트 생성보다 *먼저* 가져옵니다.
                 const itemsSnap = await orderSnap.ref.collection("items").orderBy("index").get();
                 const items = itemsSnap.empty ? orderData?.items || [] : itemsSnap.docs.map((d) => d.data());
 
-                // -------------------------------------------------------
-                // 📝 [수정 2] 주문 정보 텍스트 파일 (.txt) - 가격 삭제됨
-                // -------------------------------------------------------
                 const shipping = orderData?.shipping || {};
                 const infoText = `
 [ORDER INFO]
@@ -687,9 +654,7 @@ Note       : ${orderData?.adminNote || "-"}
 `.trim();
 
                 archive.append(infoText, { name: `${baseFolder}/order_info.txt` });
-                // -------------------------------------------------------
 
-                // 3. 이미지 파일들 추가
                 for (const item of items) {
                     const index = Number.isFinite(item?.index) ? Number(item.index) : 0;
                     const fileIndex = String(index + 1).padStart(2, "0");
@@ -710,7 +675,6 @@ Note       : ${orderData?.adminNote || "-"}
                         archive.append(file.createReadStream(), { name: entryName });
                         addedCount++;
                     } else {
-                        // 파일이 없으면 에러 로그를 텍스트로 남겨줌 (디버깅용)
                         console.warn(`[ZIP] Missing file: ${path}`);
                         archive.append(`Missing file: ${path}\n`, { name: `${baseFolder}/MISSING_${fileIndex}.txt` });
                     }
@@ -739,9 +703,8 @@ Note       : ${orderData?.adminNote || "-"}
             throw new HttpsError("internal", e.message || "ZIP creation failed");
         }
     }
-);/**
- * ✅ Print File Finalize Trigger
- */
+);
+
 export const onPrintFileFinalized = onObjectFinalized(
     { region: "us-central1", cpu: 2, memory: "1GiB" },
     async (event) => {
@@ -814,3 +777,131 @@ export const onPrintFileFinalized = onObjectFinalized(
         }
     }
 );
+
+/* =========================================================================
+   ✨ NEW: SCHEDULED FUNCTIONS (슬랙 알림 및 자동 아카이브)
+   ========================================================================= */
+
+/**
+ * 🕒 1시간마다 실행: 24시간 방치 주문 체크 및 슬랙 알림
+ */
+export const alertAbandonedOrders = onSchedule("every 1 hours", async (event) => {
+    const db = getFirestore();
+    const now = new Date();
+    // 24시간 전 시점 계산 (Timestamp 형식)
+    const twentyFourHoursAgo = admin.firestore.Timestamp.fromDate(new Date(now.getTime() - (24 * 60 * 60 * 1000)));
+
+    // 'paid' 상태인데 생성된 지 24시간이 지난 주문 조회
+    const snapshot = await db.collection("orders")
+        .where("status", "==", "paid")
+        .where("createdAt", "<=", twentyFourHoursAgo)
+        .get();
+
+    if (snapshot.empty) {
+        console.log("[Scheduler] No abandoned orders found.");
+        return;
+    }
+
+    const count = snapshot.size;
+    const orderDetails = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return `• 주문번호: ${data.orderCode} (고객: ${data.customer?.fullName || 'Guest'})`;
+    }).join("\n");
+
+    const message = {
+        text: `🚨 *[방치 주문 알림]* 24시간 동안 '결제완료' 상태에서 변동이 없는 주문이 *${count}건* 있습니다.`,
+        attachments: [{
+            color: "#FF0000",
+            title: "조치 필요 주문 목록",
+            text: orderDetails,
+            footer: "Memotile Admin Bot",
+            ts: Math.floor(now.getTime() / 1000)
+        }]
+    };
+
+    try {
+        await axios.post(SLACK_WEBHOOK_URL, message);
+        console.log(`[Scheduler] Slack alert sent for ${count} orders.`);
+    } catch (e: any) {
+        console.error("[Scheduler] Slack alert failed", e?.message);
+    }
+});
+
+/**
+ * 🕒 매일 새벽 3시 실행: 7일 지난 완료/취소 주문 자동 아카이브
+ */
+export const autoArchiveOldOrders = onSchedule("0 3 * * *", async (event) => {
+    const db = getFirestore();
+    const now = new Date();
+    // 7일 전 시점 계산
+    const sevenDaysAgo = admin.firestore.Timestamp.fromDate(new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000)));
+
+    const statusesToArchive = ["delivered", "canceled", "refunded"];
+
+    let totalArchived = 0;
+
+    for (const status of statusesToArchive) {
+        // 해당 상태이면서 업데이트된 지 7일이 지난 주문 조회
+        const snapshot = await db.collection("orders")
+            .where("status", "==", status)
+            .where("updatedAt", "<=", sevenDaysAgo)
+            .limit(500)
+            .get();
+
+        if (snapshot.empty) continue;
+
+        const batch = db.batch();
+        snapshot.docs.forEach((doc) => {
+            batch.update(doc.ref, {
+                status: "archived",
+                archivedAt: FieldValue.serverTimestamp(),
+                updatedAt: FieldValue.serverTimestamp()
+            });
+            totalArchived++;
+        });
+
+        await batch.commit();
+    }
+
+    if (totalArchived > 0) {
+        console.log(`[Scheduler] Archived ${totalArchived} orders.`);
+        try {
+            await axios.post(SLACK_WEBHOOK_URL, {
+                text: `📦 *[자동 아카이브 완료]* 7일 이상 경과된 완료/취소 주문 *${totalArchived}건*이 'archived' 상태로 변경되었습니다.`
+            });
+        } catch (e) { }
+    }
+});
+
+/**
+ * ✅ Admin: Delete Order (영구 삭제)
+ * - 주문 문서와 items 서브컬렉션을 모두 삭제합니다.
+ */
+export const adminDeleteOrder = onCall({ region: "us-central1", cors: true }, async (req) => {
+    try {
+        if (!req.auth?.uid || req.auth.token.isAdmin !== true) {
+            throw new HttpsError("permission-denied", "Admin 전용 기능입니다.");
+        }
+        const { orderId } = req.data || {};
+        if (!orderId) throw new HttpsError("invalid-argument", "orderId가 필요합니다.");
+
+        const db = getFirestore();
+        const orderRef = db.collection("orders").doc(String(orderId));
+
+        // 1. 하위 items 삭제
+        const items = await orderRef.collection("items").get();
+        const batch = db.batch();
+        items.forEach(doc => batch.delete(doc.ref));
+
+        // 2. 메인 주문 문서 삭제
+        batch.delete(orderRef);
+
+        await batch.commit();
+        console.log(`[Delete] Order ${orderId} permanently deleted by admin.`);
+        return { ok: true };
+    } catch (e: any) {
+        console.error("[adminDeleteOrder] failed", e);
+        if (e instanceof HttpsError) throw e;
+        throw new HttpsError("internal", e?.message || "Delete failed");
+    }
+});

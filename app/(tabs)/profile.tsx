@@ -1,5 +1,6 @@
-import React, { useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable } from "react-native";
+// src/screens/Profile.tsx
+import React, { useState, useEffect } from "react";
+import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, Modal } from "react-native";
 import { useRouter } from "expo-router";
 import {
     User, MapPin, CreditCard, HelpCircle, MessageCircle, Shield, FileText, ChevronRight, LogIn, LogOut
@@ -9,50 +10,116 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLanguage } from "../../src/context/LanguageContext";
 import { colors } from "../../src/theme/colors";
 import { shadows } from "../../src/theme/shadows";
-
-// Mock Auth logic to replace Web AuthContext locally for this step
-const useMockAuth = () => {
-    const [user, setUser] = useState<{ email: string } | null>(null);
-    const login = () => setUser({ email: "demo@memotile.com" });
-    const logout = () => setUser(null);
-    return { user, login, logout };
-};
+import { auth, db } from "../../src/lib/firebase";
+import { doc, onSnapshot } from "firebase/firestore";
 
 export default function Profile() {
-    const { t } = useLanguage();
+    const { t, locale } = useLanguage();
     const router = useRouter();
     const insets = useSafeAreaInsets();
 
-    // Use local mock auth instead of importing from src/context/AuthContext (which uses localStorage)
-    const { user, login, logout } = useMockAuth();
+    const [user, setUser] = useState(auth.currentUser);
+    const [userData, setUserData] = useState<any>(null);
+    const [isLoading, setIsLoading] = useState(false);
 
-    const handleSignIn = () => {
-        login();
+    const [modalVisible, setModalVisible] = useState(false);
+    const [modalInfo, setModalInfo] = useState({ title: "", content: "" });
+
+    useEffect(() => {
+        const unsubAuth = auth.onAuthStateChanged((u) => {
+            setUser(u);
+            if (u) {
+                fetchUserData(u.uid);
+            } else {
+                setUserData(null);
+            }
+        });
+        return unsubAuth;
+    }, []);
+
+    const fetchUserData = (uid: string) => {
+        setIsLoading(true);
+        const unsubDoc = onSnapshot(doc(db, "users", uid), (docSnap) => {
+            if (docSnap.exists()) {
+                setUserData(docSnap.data());
+            }
+            setIsLoading(false);
+        });
+        return unsubDoc;
     };
 
-    const handleLogout = () => {
-        logout();
+    const handleLogout = async () => {
+        try {
+            await auth.signOut();
+            router.replace("/");
+        } catch (e) {
+            console.error("Logout failed", e);
+        }
     };
 
-    // Logic ported from src/pages/Profile.jsx
+    const showDetail = (title: string, type: 'address' | 'payment') => {
+        if (!user) return router.push("/auth/email");
+
+        let content = "";
+        if (type === 'address') {
+            const addr = userData?.defaultAddress;
+            if (!addr) {
+                content = (t as any).noAddressSaved || "No address saved";
+            } else {
+                content = `${addr.fullName || ""}\n${addr.addressLine1 || ""}\n${addr.addressLine2 ? addr.addressLine2 + "\n" : ""}${addr.city}, ${addr.state} ${addr.postalCode}\n\nPhone: ${addr.phone || ""}`;
+            }
+        } else {
+            const pay = userData?.lastPayment;
+            if (!pay) {
+                content = (t as any).noPaymentHistory || "No history";
+            } else {
+                content = `Date: ${pay.date}\nMethod: ${pay.method}\n\nID: ${pay.id || 'N/A'}`;
+            }
+        }
+
+        setModalInfo({ title, content });
+        setModalVisible(true);
+    };
+
+    const getAddressSummary = () => {
+        if (!userData?.defaultAddress) return (t as any).noAddressSaved || "No address saved";
+        const addr = userData.defaultAddress;
+        return `${addr.city || ""}, ${addr.state || ""}`.replace(/^, /, "");
+    };
+
+    const getPaymentSummary = () => {
+        if (!userData?.lastPayment) return (t as any).noPaymentHistory || "No history";
+        return `${userData.lastPayment.date} (${userData.lastPayment.method})`;
+    };
+
     const menuGroups = [
         {
             title: t.account,
             items: [
                 user ? {
                     title: (t as any).signOut || "Sign Out",
-                    icon: LogOut, // Using LogOut for better UX
+                    icon: LogOut,
                     subtitle: user.email,
                     onClick: handleLogout,
                     isDestructive: true
                 } : {
                     title: t.signIn,
                     icon: LogIn,
-                    subtitle: t.exampleUser,
-                    onClick: handleSignIn
+                    subtitle: (t as any).signInToContinue || "Sign in to continue",
+                    onClick: () => router.push("/auth/email")
                 },
-                { title: t.addresses, icon: MapPin, onClick: () => { } },
-                { title: t.paymentMethods, icon: CreditCard, onClick: () => { } },
+                {
+                    title: t.addresses,
+                    icon: MapPin,
+                    subtitle: user ? getAddressSummary() : null,
+                    onClick: () => showDetail(t.addresses, 'address')
+                },
+                {
+                    title: t.paymentMethods,
+                    icon: CreditCard,
+                    subtitle: user ? getPaymentSummary() : null,
+                    onClick: () => showDetail(t.paymentMethods, 'payment')
+                },
             ]
         },
         {
@@ -73,7 +140,10 @@ export default function Profile() {
 
     return (
         <View style={[styles.container, { paddingTop: insets.top }]}>
-            <Text style={styles.header}>{t.profile}</Text>
+            <View style={styles.headerRow}>
+                <Text style={styles.header}>{t.profile}</Text>
+                {isLoading && <ActivityIndicator size="small" color={colors.ink} style={{ marginRight: 20 }} />}
+            </View>
 
             <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
                 {menuGroups.map((group, gIdx) => (
@@ -82,24 +152,33 @@ export default function Profile() {
                         <View style={styles.card}>
                             {group.items.map((item: any, iIdx: number) => {
                                 const isLast = iIdx === group.items.length - 1;
-                                const textColor = item.isDestructive ? colors.danger : "#111"; // Matches styles.rowTitle color
-                                const iconColor = item.isDestructive ? colors.danger : "#111"; // Matches icon color
+                                const textColor = item.isDestructive ? colors.danger : "#111";
+                                const iconColor = item.isDestructive ? colors.danger : "#111";
 
                                 return (
                                     <Pressable
                                         key={`${group.title}-${iIdx}`}
                                         style={({ pressed }) => [
                                             styles.row,
-                                            pressed && { backgroundColor: "#F2F2F7" } // Matches onTouchStart bg
+                                            pressed && { backgroundColor: "#F2F2F7" }
                                         ]}
                                         onPress={item.onClick}
                                     >
+                                        {/* ✅ 수정됨: 좌측 영역에 flexShrink 추가하여 침범 방지 */}
                                         <View style={styles.rowLeft}>
                                             <item.icon size={20} color={iconColor} strokeWidth={2} />
-                                            <Text style={[styles.rowTitle, { color: textColor }]}>{item.title}</Text>
+                                            <Text style={[styles.rowTitle, { color: textColor }]} numberOfLines={1}>
+                                                {item.title}
+                                            </Text>
                                         </View>
+
+                                        {/* ✅ 수정됨: 우측 영역 flex: 1 설정 */}
                                         <View style={styles.rowRight}>
-                                            {item.subtitle && <Text style={styles.rowSubtitle}>{item.subtitle}</Text>}
+                                            {item.subtitle && (
+                                                <Text style={styles.rowSubtitle} numberOfLines={1}>
+                                                    {item.subtitle}
+                                                </Text>
+                                            )}
                                             <ChevronRight size={18} color="#8E8E93" />
                                         </View>
                                         {!isLast && <View style={styles.divider} />}
@@ -115,92 +194,85 @@ export default function Profile() {
                     <Text style={styles.copyright}>© 2026 Memotile</Text>
                 </View>
             </ScrollView>
+
+            <Modal
+                animationType="slide"
+                transparent={true}
+                visible={modalVisible}
+                onRequestClose={() => setModalVisible(false)}
+            >
+                <Pressable style={styles.modalOverlay} onPress={() => setModalVisible(false)} />
+                <View style={styles.bottomSheet}>
+                    <View style={styles.sheetHandle} />
+                    <Text style={styles.sheetTitle}>{modalInfo.title}</Text>
+                    <View style={styles.sheetCard}>
+                        <Text style={styles.sheetContent}>{modalInfo.content}</Text>
+                    </View>
+                    <Pressable
+                        style={styles.confirmButton}
+                        onPress={() => setModalVisible(false)}
+                    >
+                        <Text style={styles.confirmButtonText}>
+                            {(t as any).ok || (locale === 'TH' ? 'ตกลง' : 'OK')}
+                        </Text>
+                    </Pressable>
+                </View>
+            </Modal>
         </View>
     );
 }
 
 const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-        // Note: MyOrders had paddingBottom, Profile has paddingBottom in container
-        paddingBottom: 120, // Matches styles.container paddingBottom
-    },
-    header: {
-        fontSize: 28,
-        fontWeight: "800",
-        marginBottom: 24,
-        color: "#111", // Matches styles.header
-        paddingHorizontal: 20, // In web it was implicit or from Layout, adding for safety
-        marginTop: 20,
-    },
-    scrollContent: {
-        paddingHorizontal: 20,
-    },
-    section: {
-        marginBottom: 28, // Matches styles.section
-    },
-    sectionTitle: {
-        fontSize: 13,
-        fontWeight: "600",
-        color: "#8E8E93", // Matches styles.sectionTitle
-        textTransform: "uppercase",
-        letterSpacing: 0.4,
-        marginBottom: 8,
-        marginLeft: 4,
-    },
-    card: {
-        backgroundColor: "#fff",
-        borderRadius: 16,
-        overflow: "hidden",
-        ...shadows.sm, // Matches box-shadow
-    },
+    container: { flex: 1, backgroundColor: "#F7F7F8", paddingBottom: 60 },
+    headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    header: { fontSize: 28, fontWeight: "800", marginBottom: 24, color: "#111", paddingHorizontal: 20, marginTop: 20 },
+    scrollContent: { paddingHorizontal: 20 },
+    section: { marginBottom: 28 },
+    sectionTitle: { fontSize: 13, fontWeight: "600", color: "#8E8E93", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 8, marginLeft: 4 },
+    card: { backgroundColor: "#fff", borderRadius: 16, overflow: "hidden", ...shadows.sm },
+
+    // ✅ 수정됨: flexDirection을 통한 균형 잡힌 레이아웃
     row: {
         width: "100%",
-        height: 56, // Matches styles.row
+        minHeight: 56,
         flexDirection: "row",
         alignItems: "center",
-        justifyContent: "space-between",
         paddingHorizontal: 16,
-        position: "relative",
+        position: "relative"
     },
     rowLeft: {
         flexDirection: "row",
         alignItems: "center",
-        gap: 12, // Matches styles.rowLeft
+        gap: 12,
+        flexShrink: 1, // 좌측 텍스트가 길어지면 줄어들게 설정
+        marginRight: 10
     },
-    rowTitle: {
-        fontSize: 16,
-        fontWeight: "500",
-        color: "#111", // Matches styles.rowTitle
-    },
+    rowTitle: { fontSize: 16, fontWeight: "500", color: "#111" },
+
     rowRight: {
         flexDirection: "row",
         alignItems: "center",
-        gap: 8, // Matches styles.rowRight
+        gap: 8,
+        flex: 1, // 남은 공간 모두 차지
+        justifyContent: 'flex-end'
     },
-    rowSubtitle: {
-        fontSize: 14,
-        color: "#8E8E93", // Matches styles.rowSubtitle
+    rowSubtitle: { fontSize: 13, color: "#8E8E93", flexShrink: 1 }, // 서브타이틀도 길면 생략
+
+    divider: { position: "absolute", bottom: 0, right: 0, left: 48, height: 1, backgroundColor: "#F2F2F7" },
+    footer: { alignItems: "center", marginTop: 12, marginBottom: 40 },
+    version: { fontSize: 12, color: "#C7C7CC", marginBottom: 4 },
+    copyright: { fontSize: 12, color: "#C7C7CC" },
+
+    modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)" },
+    bottomSheet: {
+        position: "absolute", bottom: 0, left: 0, right: 0,
+        backgroundColor: "white", borderTopLeftRadius: 24, borderTopRightRadius: 24,
+        padding: 24, paddingBottom: 50, alignItems: "center", ...shadows.lg,
     },
-    divider: {
-        position: "absolute",
-        bottom: 0,
-        right: 0,
-        left: 48, // Matches styles.divider left
-        height: 1, // Matches styles.divider height
-        backgroundColor: "#F2F2F7", // Matches styles.divider bg
-    },
-    footer: {
-        alignItems: "center",
-        marginTop: 12, // Matches styles.footer
-    },
-    version: {
-        fontSize: 12,
-        color: "#C7C7CC", // Matches styles.version
-        marginBottom: 4,
-    },
-    copyright: {
-        fontSize: 12,
-        color: "#C7C7CC", // Matches styles.copyright
-    },
+    sheetHandle: { width: 40, height: 5, backgroundColor: "#E5E7EB", borderRadius: 10, marginBottom: 20 },
+    sheetTitle: { fontSize: 18, fontWeight: "700", color: "#111", marginBottom: 20 },
+    sheetCard: { width: '100%', backgroundColor: "#F8F9FA", padding: 18, borderRadius: 16, marginBottom: 24 },
+    sheetContent: { fontSize: 15, lineHeight: 22, color: "#4B5563" },
+    confirmButton: { width: '100%', height: 54, backgroundColor: "#111", borderRadius: 12, justifyContent: "center", alignItems: "center" },
+    confirmButtonText: { color: "white", fontSize: 16, fontWeight: "600" }
 });

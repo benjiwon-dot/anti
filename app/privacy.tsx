@@ -114,6 +114,16 @@ export default function PrivacyPolicy() {
                         {t.privacy_sec11_text} <Text style={styles.link} onPress={handleEmailPress}>{t.supportEmail}</Text>.
                     </Text>
                 </View>
+
+                {/* Business Info Section */}
+                <View style={styles.businessInfoContainer}>
+                    <Text style={styles.businessInfoTitle}>{t.business_info_title}</Text>
+                    <Text style={styles.businessInfoText}>{t.business_name}</Text>
+                    <Text style={styles.businessInfoText}>{t.business_representative}</Text>
+                    <Text style={styles.businessInfoText}>{t.business_address}</Text>
+                    <Text style={styles.businessInfoText}>{t.business_tax_id}</Text>
+                </View>
+
             </ScrollView>
         </View>
     );
@@ -191,5 +201,24 @@ const styles = StyleSheet.create({
     link: {
         color: colors.primary,
         fontWeight: '500',
+    },
+    // Styles for Business Info
+    businessInfoContainer: {
+        marginTop: 40,
+        paddingTop: 24,
+        borderTopWidth: 1,
+        borderTopColor: '#eee',
+    },
+    businessInfoTitle: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: '#888',
+        marginBottom: 8,
+    },
+    businessInfoText: {
+        fontSize: 12,
+        color: '#999',
+        lineHeight: 18,
+        marginBottom: 2,
     }
 });

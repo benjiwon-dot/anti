@@ -1,14 +1,22 @@
 {
   "expo": {
-    "name": "memotile_app_anti",
+    "name": "MemoTile",
     "slug": "memotile-app-anti",
     "version": "1.0.0",
-    "runtimeVersion": {
-      "policy": "appVersion"
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
     },
     "updates": {
       "url": "https://u.expo.dev/998b0866-55ab-44aa-a1b1-9b82af8c3fe1"
     },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "scheme": [
       "memotile",
       "com.googleusercontent.apps.166543035480-d0hra4ce54ljrvnka86v6n0tvfkrt25b"
@@ -17,14 +25,8 @@
       "expo-router",
       "expo-web-browser"
     ],
-    "android": {
-      "package": "com.anonymous.memotileappanti"
-    },
-    "splash": {
-      "backgroundColor": "#FFFFFF",
-      "resizeMode": "contain"
-    },
     "ios": {
+      "supportsTablet": true,
       "bundleIdentifier": "com.benjiwon.memotileappanti",
       "infoPlist": {
         "CFBundleURLTypes": [
@@ -37,6 +39,17 @@
         ]
       }
     },
+    "android": {
+      "package": "com.anonymous.memotileappanti",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      }
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "runtimeVersion": "1.0.0",
     "extra": {
       "router": {},
       "eas": {

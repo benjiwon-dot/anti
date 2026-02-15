@@ -7,7 +7,7 @@ import {
     ScrollView,
     Pressable,
     Alert,
-    Linking,
+    Linking, // ✅ 이미 import 되어 있음
     type PressableStateCallbackType,
     type StyleProp,
     type ViewStyle,
@@ -18,7 +18,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import { BlurView } from "expo-blur";
-import { manipulateAsync, SaveFormat } from "expo-image-manipulator"; // ✅ import 위치 이동
+import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 
 import { colors } from "../../src/theme/colors";
 import { layout } from "../../src/theme/layout";
@@ -54,6 +54,21 @@ export default function Index() {
 
     const [slideshowIndex, setSlideshowIndex] = useState(0);
     const [billboardIndex, setBillboardIndex] = useState(0);
+
+    // ✅ SNS 연결 핸들러 추가
+    const handleLinePress = () => {
+        // 라인 비즈니스 계정 연결 (스크린샷의 @946zhley 사용)
+        Linking.openURL("https://line.me/ti/p/@946zhley").catch(() => {
+            Alert.alert("Error", "LINE 앱을 열 수 없습니다.");
+        });
+    };
+
+    const handleInstagramPress = () => {
+        // 인스타그램 계정 연결 (memotile_studio 사용)
+        Linking.openURL("https://instagram.com/memotile_studio").catch(() => {
+            Alert.alert("Error", "인스타그램을 열 수 없습니다.");
+        });
+    };
 
     // Resume Handler
     const handleResume = async () => {
@@ -107,35 +122,29 @@ export default function Index() {
 
         const result = await ImagePicker.launchImageLibraryAsync({
             mediaTypes: ImagePicker.MediaTypeOptions.Images,
-            allowsMultipleSelection: true, // ✅ 수정됨: 다중 선택 허용 옵션 추가
+            allowsMultipleSelection: true,
             selectionLimit: 20,
             quality: 1,
         });
 
         if (!result.canceled && result.assets?.length) {
-            // ✅ [수정됨] 2000px 프록시 이미지 생성 로직
             const processedAssets = await Promise.all(
                 result.assets.map(async (asset) => {
-                    // 1. 5000px 원본 정보 따로 저장
                     const originalUri = asset.uri;
                     const originalWidth = asset.width;
                     const originalHeight = asset.height;
 
-                    // 2. 앱에서 쓸 이미지는 2000px로 리사이징 (메모리 보호)
                     const manipulated = await manipulateAsync(
                         originalUri,
-                        [{ resize: { width: 2000 } }], // 👈 여기가 2000px 설정입니다
+                        [{ resize: { width: 2000 } }],
                         { compress: 0.8, format: SaveFormat.JPEG }
                     );
 
-                    // 3. 데이터 합치기
                     return {
                         ...asset,
-                        uri: manipulated.uri,       // 화면엔 2000px 보여줌
-                        width: manipulated.width,   // 2000 (또는 비율에 맞게 줄어든 높이)
+                        uri: manipulated.uri,
+                        width: manipulated.width,
                         height: manipulated.height,
-
-                        // 👇 서버 업로드용 진짜 원본 경로 숨겨두기
                         originalUri: originalUri,
                         originalWidth: originalWidth,
                         originalHeight: originalHeight
@@ -213,6 +222,7 @@ export default function Index() {
                 }}
                 showsVerticalScrollIndicator={false}
             >
+                {/* Hero Section ... */}
                 <View style={styles.hero}>
                     <View style={styles.heroContent}>
                         <View style={styles.headlineGroup}>
@@ -251,6 +261,7 @@ export default function Index() {
                     </View>
                 </View>
 
+                {/* Benefits Section ... */}
                 <View style={[styles.section, { backgroundColor: colors.canvas }]}>
                     <Text style={styles.sectionSmallTitle}>{t.benefitsTitle}</Text>
                     <View style={styles.grid}>
@@ -273,6 +284,7 @@ export default function Index() {
                     </View>
                 </View>
 
+                {/* Billboard Section ... */}
                 <View style={styles.section}>
                     <View style={styles.billboardContainer}>
                         <View style={styles.billboardImgWrapper}>
@@ -321,6 +333,7 @@ export default function Index() {
                     </View>
                 </View>
 
+                {/* How it works Section ... */}
                 <View style={styles.section}>
                     <Text style={styles.sectionTitle}>{t.howItWorks}</Text>
                     <View style={styles.stepsContainer}>
@@ -336,14 +349,15 @@ export default function Index() {
                     <Text style={styles.deliverySubtitle}>{t.deliverySub}</Text>
                 </View>
 
+                {/* ✅ Footer: 버튼 연결 완료 */}
                 <View style={styles.footer}>
                     <Text style={styles.footerHelpTitle}>{t.needHelp}</Text>
                     <View style={styles.footerActions}>
-                        <Pressable style={styles.footerBtn}>
+                        <Pressable style={styles.footerBtn} onPress={handleLinePress}>
                             <Feather name={"message-circle" as any} size={18} color={colors.ink} />
                             <Text style={styles.footerBtnText}>LINE</Text>
                         </Pressable>
-                        <Pressable style={styles.footerBtn}>
+                        <Pressable style={styles.footerBtn} onPress={handleInstagramPress}>
                             <Feather name={"instagram" as any} size={18} color={colors.ink} />
                             <Text style={styles.footerBtnText}>Instagram</Text>
                         </Pressable>
@@ -355,6 +369,7 @@ export default function Index() {
     );
 }
 
+// ... BenefitCard, StepItem, styles (기존과 동일하므로 유지)
 const BenefitCard = ({ icon, title, desc }: { icon: React.ReactNode; title: string; desc: string }) => (
     <View style={styles.benefitCard}>
         <View style={styles.benefitIcon}>{icon}</View>
@@ -437,7 +452,6 @@ const styles = StyleSheet.create({
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "center",
-        // ✅ [수정] shadows.cta가 없으므로 shadows.md로 대체 (또는 직접 shadow 스타일 입력)
         ...shadows.md,
     },
     ctaInner: { flexDirection: "row", alignItems: "center" },

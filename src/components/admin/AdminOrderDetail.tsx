@@ -1,4 +1,3 @@
-// src/components/admin/AdminOrderDetail.tsx
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -20,6 +19,8 @@ import {
     StickyNote,
     Truck,
     Tag,
+    Trash2, // 추가
+    Clock,  // 추가
 } from "lucide-react";
 
 import { getStorage, ref, getDownloadURL } from "firebase/storage";
@@ -325,6 +326,31 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
         }
     };
 
+    // ✅ [추가됨] 영구 삭제 핸들러
+    const handleDeleteOrder = async () => {
+        if (!order || !isWeb) return;
+
+        if (!confirm("🚨 경고: 이 주문 데이터를 서버에서 영구적으로 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.")) return;
+        const confirmCode = prompt(`삭제를 확정하려면 주문 코드 [${order.orderCode}]를 입력하세요:`);
+
+        if (confirmCode !== order.orderCode) {
+            alert("주문 코드가 일치하지 않습니다. 삭제가 취소되었습니다.");
+            return;
+        }
+
+        setBusy(true);
+        try {
+            const fn = httpsCallable(functions, "adminDeleteOrder");
+            await fn({ orderId });
+            alert("주문이 성공적으로 삭제되었습니다.");
+            router.replace("/admin/orders");
+        } catch (e: any) {
+            alertCallableError("영구 삭제 실패:", e);
+        } finally {
+            setBusy(false);
+        }
+    };
+
     /* ---------- States ---------- */
 
     if (loading) {
@@ -367,12 +393,24 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
     const customerEmail = order.customer?.email || order.shipping?.email || "-";
     const customerPhone = order.customer?.phone || order.shipping?.phone || "-";
 
-    // 📱 기기 정보 가져오기 (DB에 deviceInfo 필드로 저장되었다고 가정)
+    // 📱 기기 정보 가져오기
     const deviceInfo = orderOps.deviceInfo;
     const isIos = deviceInfo?.os === "ios";
 
+    // ✅ [추가됨] 방치 주문 체크 (24시간)
+    const isAbandoned = order.status === 'paid' && (new Date().getTime() - new Date(order.createdAt).getTime() > 24 * 60 * 60 * 1000);
+    const isArchived = order.status === 'archived';
+
     return (
         <div className="space-y-8 pb-20">
+            {/* ✅ 아카이브 안내 */}
+            {isArchived && (
+                <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl flex items-center gap-3 text-amber-700 font-bold">
+                    <Clock size={20} />
+                    이 주문은 오래되어 아카이브(보관) 처리되었습니다. 데이터만 조회 가능합니다.
+                </div>
+            )}
+
             {/* Header */}
             <div className="flex flex-col md:flex-row justify-between gap-6">
                 <div className="flex items-center gap-4">
@@ -381,9 +419,18 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
                     </button>
 
                     <div>
-                        <div className="flex items-center gap-3">
+                        <div className="flex flex-wrap items-center gap-3">
                             <h1 className="text-3xl font-black font-mono">{order.orderCode}</h1>
                             <StatusBadge status={order.status} />
+
+                            {/* ✅ [추가됨] 방치 알림 배지 */}
+                            {isAbandoned && (
+                                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs bg-rose-600 text-white font-black animate-pulse shadow-lg shadow-rose-200">
+                                    <AlertCircle size={14} />
+                                    🚨 24H ABANDONED
+                                </span>
+                            )}
+
                             {promoCode && (
                                 <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-indigo-100 text-indigo-700 font-bold border border-indigo-200">
                                     <Tag size={12} />
@@ -391,7 +438,7 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
                                 </span>
                             )}
                         </div>
-                        <p className="text-xs text-zinc-400 font-mono flex items-center gap-2">
+                        <p className="text-xs text-zinc-400 font-mono flex items-center gap-2 mt-1">
                             {order.id}
                             <button
                                 className="inline-flex items-center gap-1 text-zinc-400 hover:text-zinc-800"
@@ -410,7 +457,7 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
                         className="border px-3 py-2 rounded-lg text-sm font-bold"
                         disabled={busy}
                     >
-                        {["paid", "processing", "printed", "shipping", "delivered", "canceled", "refunded"].map((s) => (
+                        {["paid", "processing", "printed", "shipping", "delivered", "canceled", "refunded", "archived"].map((s) => (
                             <option key={s} value={s}>
                                 {s.toUpperCase()}
                             </option>
@@ -422,6 +469,12 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
                             Cancel Order
                         </button>
                     )}
+
+                    {/* ✅ [추가됨] 영구 삭제 버튼 */}
+                    <button onClick={handleDeleteOrder} disabled={busy} className="admin-btn bg-rose-600 text-white hover:bg-rose-700 border-none shadow-md shadow-rose-100">
+                        <Trash2 size={16} />
+                        Delete Permanently
+                    </button>
 
                     <button onClick={handleExportJson} disabled={busy} className="admin-btn admin-btn-secondary">
                         <FileJson size={16} /> JSON
@@ -442,7 +495,6 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
                     <div>
                         <div className="text-lg font-black">{customerName}</div>
 
-                        {/* 📱 기기 정보 표시 뱃지 */}
                         {deviceInfo && (
                             <div
                                 className={`mt-1 inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold border ${isIos ? "bg-zinc-100 text-zinc-800 border-zinc-200" : "bg-green-50 text-green-700 border-green-200"
@@ -477,7 +529,6 @@ export default function AdminOrderDetail({ orderId }: { orderId: string }) {
                         )}
                     </div>
 
-                    {/* Promo Info */}
                     <div className="mt-4 pt-4 border-t border-zinc-100 space-y-2">
                         {promoCode && (
                             <div className="flex justify-between items-center text-sm">

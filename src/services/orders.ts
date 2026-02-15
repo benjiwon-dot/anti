@@ -74,12 +74,6 @@ async function ensureAuthed(): Promise<string> {
     return user.uid;
 }
 
-/**
- * ✅ Firestore transaction based order code reservation
- * - orderCounters/{YYYYMMDD}.nextSeq
- * - If doc missing: create {nextSeq: 2} and return seq=1
- * - Else: use current nextSeq as seq, then increment
- */
 async function reserveOrderCode(dateKey: string): Promise<string> {
     if (!/^\d{8}$/.test(dateKey)) throw new Error("dateKey must be YYYYMMDD");
 
@@ -90,9 +84,8 @@ async function reserveOrderCode(dateKey: string): Promise<string> {
     const { seq } = await runTransaction(db, async (tx) => {
         const snap = await tx.get(counterRef);
 
-        // 최초 생성
         if (!snap.exists()) {
-            tx.set(counterRef, { nextSeq: 2 }); // rules에서 create==2 요구
+            tx.set(counterRef, { nextSeq: 2 });
             return { seq: 1 };
         }
 
@@ -115,15 +108,13 @@ export async function createDevOrder(params: {
     totals: { subtotal: number; discount: number; shippingFee: number; total: number };
     promoCode?: { code: string; discountType: string; discountValue: number };
     locale?: string;
+    instagram?: string;
 }): Promise<string> {
-    const { uid, shipping, photos, totals, promoCode, locale = "EN" } = params;
+    const { uid, shipping, photos, totals, promoCode, locale = "EN", instagram } = params;
 
     if (!uid) throw new Error("User identifier (uid) is missing.");
 
     const authedUid = await ensureAuthed();
-    if (authedUid !== uid) {
-        console.warn("[OrderService] uid mismatch (param vs auth). Using auth uid.", { uid, authedUid });
-    }
 
     const orderRef = doc(collection(db, "orders")) as DocumentReference;
     const orderId = orderRef.id;
@@ -134,7 +125,6 @@ export async function createDevOrder(params: {
     const customerSlug = safeCustomerFolder(shipping, authedUid);
     const storageBasePath = `orders/${dateKey}/${orderCode}/${customerSlug}`;
 
-    // 1. 주문 기본 정보 먼저 생성 (순서 보장)
     const rawOrderData: any = {
         uid: authedUid,
         orderCode,
@@ -163,14 +153,28 @@ export async function createDevOrder(params: {
         paymentMethod: "FREE",
         locale,
         promoCode: promoCode?.code,
+        instagram,
     };
 
     if (promoCode) rawOrderData.promo = promoCode;
 
     await setDoc(orderRef, stripUndefined(rawOrderData));
 
-    // 2. ✅ [수정] 병렬 업로드 처리 (Promise.all)
-    // 8장을 한 번에 업로드 시작하여 속도를 획기적으로 단축
+    // ✅ [추가] 유저 프로필에 주소 및 최근 결제수단 자동 저장/업데이트
+    const userProfileRef = doc(db, "users", authedUid);
+    const today = new Date();
+    const formattedDate = `${today.getFullYear()}. ${String(today.getMonth() + 1).padStart(2, '0')}. ${String(today.getDate()).padStart(2, '0')}`;
+
+    await setDoc(userProfileRef, {
+        defaultAddress: shipping,
+        instagram: instagram || "",
+        lastPayment: {
+            method: totals.total === 0 ? "Promo Code" : "PromptPay", // 최근 결제 수단 명칭
+            date: formattedDate
+        },
+        updatedAt: serverTimestamp()
+    }, { merge: true });
+
     const uploadTasks = photos.map(async (p, i) => {
         const viewUri = p?.output?.viewUri;
         if (!viewUri) throw new Error(`VIEW URI missing at index ${i}`);
@@ -182,7 +186,6 @@ export async function createDevOrder(params: {
         const sourcePath = `${storageBasePath}/items/${i}_source.jpg`;
         const printPath = `${storageBasePath}/items/${i}_print.jpg`;
 
-        // 3. 한 아이템 내에서도 소스/뷰 업로드를 동시에 진행
         const [sourceRes, viewRes] = await Promise.all([
             uploadFileUriToStorage(sourcePath, sourceUri),
             uploadFileUriToStorage(viewPath, viewUri)
@@ -196,11 +199,9 @@ export async function createDevOrder(params: {
             filterId: p.edits?.filterId || "original",
             filterParams: p.edits?.committed?.filterParams || p.edits?.filterParams || null,
             cropPx: p.edits?.committed?.cropPx || null,
-
             unitPrice: totals.subtotal / photos.length || 0,
             lineTotal: (totals.subtotal / photos.length || 0) * (p.quantity || 1),
             size: "20x20",
-
             assets: {
                 sourcePath: sourceRes.path,
                 sourceUrl: sourceRes.downloadUrl,
@@ -209,22 +210,16 @@ export async function createDevOrder(params: {
                 printPath,
                 printUrl: null,
             },
-
             printUrl: null,
             previewUrl: viewRes.downloadUrl,
             createdAt: serverTimestamp(),
         };
 
         await setDoc(itemRef, stripUndefined(rawItemData));
-
-        // 썸네일 URL 수집 (주문 목록 표시용)
         return viewRes.downloadUrl;
     });
 
-    // 4. 모든 작업이 끝날 때까지 대기 (가장 느린 작업 기준 1번만 기다리면 됨)
     const results = await Promise.all(uploadTasks);
-
-    // 유효한 URL만 필터링하여 상위 5개 저장
     const previewImages = results.filter((url) => url !== null).slice(0, 5) as string[];
 
     if (previewImages.length > 0) {
@@ -238,14 +233,11 @@ export async function getOrder(orderId: string): Promise<OrderDoc | null> {
     const docRef = doc(db, "orders", orderId);
     const snap = await getDoc(docRef);
     if (!snap.exists()) return null;
-
     const order = { id: snap.id, ...snap.data() } as OrderDoc;
-
     const itemsSnap = await getDocs(collection(db, "orders", orderId, "items"));
     if (!itemsSnap.empty) {
         order.items = itemsSnap.docs.map((d) => d.data() as OrderItem).sort((a, b) => a.index - b.index);
     }
-
     return order;
 }
 
@@ -259,14 +251,11 @@ export function subscribeOrder(orderId: string, onUpdate: (order: OrderDoc | nul
     const docRef = doc(db, "orders", orderId);
     return onSnapshot(docRef, async (snap) => {
         if (!snap.exists()) return onUpdate(null);
-
         const order = { id: snap.id, ...snap.data() } as OrderDoc;
-
         const itemsSnap = await getDocs(collection(db, "orders", orderId, "items"));
         if (!itemsSnap.empty) {
             order.items = itemsSnap.docs.map((d) => d.data() as OrderItem).sort((a, b) => a.index - b.index);
         }
-
         onUpdate(order);
     });
 }
